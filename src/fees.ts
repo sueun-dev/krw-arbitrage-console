@@ -1,0 +1,10 @@
+export const BITHUMB_SPOT_TAKER_FEE = 0.001;
+export const UPBIT_SPOT_TAKER_FEE = 0.0005;
+export const GATEIO_SPOT_TAKER_FEE = 0.002;
+export const GATEIO_PERP_TAKER_FEE = 0.0005;
+export const OKX_SPOT_TAKER_FEE = 0.001;
+export const OKX_PERP_TAKER_FEE = 0.0005;
+export const BYBIT_SPOT_TAKER_FEE = 0.001;
+export const BYBIT_PERP_TAKER_FEE = 0.0006;
+export const HYPERLIQUID_SPOT_TAKER_FEE = 0.0007;
+export const HYPERLIQUID_PERP_TAKER_FEE = 0.00045;

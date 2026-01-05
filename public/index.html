@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Arbitrage Watch</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="topbar">
+        <div class="brand">
+          <div class="eyebrow"><span id="domestic-pair">Korean Exchange</span> - <span id="overseas-pair">GateIO</span></div>
+          <h1>Reverse Watch</h1>
+          <p class="sub">
+            Live best bid/ask monitor. Perp vs spot gaps, transfer networks, and fees in one view.
+          </p>
+        </div>
+        <div class="meta">
+          <div class="live-row">
+            <span id="status" class="status-badge">Connecting...</span>
+            <span class="status-hint">SSE</span>
+          </div>
+          <div class="meta-line" id="status-detail">Status: --</div>
+          <div class="meta-line" id="config-meta">Config: --</div>
+        </div>
+      </header>
+
+      <section class="stats-grid">
+        <div class="stat-card">
+          <div class="label">USDT/KRW</div>
+          <div class="value" id="usdtKrw">--</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Time</div>
+          <div class="value" id="time">--</div>
+        </div>
+      </section>
+
+      <section class="controls">
+        <div class="control-block">
+          <div class="block-head">
+            <h2>Exchanges</h2>
+            <p class="helper">Select Korean and overseas sources for comparison.</p>
+          </div>
+          <div class="toggle-stack">
+            <div class="exchange-toggle">
+              <span class="label">Korean Exchange</span>
+              <div class="toggle-group">
+                <button type="button" class="toggle-button" data-domestic="bithumb">Bithumb</button>
+                <button type="button" class="toggle-button" data-domestic="upbit">Upbit</button>
+              </div>
+            </div>
+            <div class="exchange-toggle">
+              <span class="label">Overseas Exchange</span>
+              <div class="toggle-group">
+                <button type="button" class="toggle-button" data-overseas="gateio">GateIO</button>
+                <button type="button" class="toggle-button" data-overseas="bybit">Bybit</button>
+                <button type="button" class="toggle-button" data-overseas="okx">OKX</button>
+                <button type="button" class="toggle-button" data-overseas="hyperliquid">Hyperliquid</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </section>
+
+      <main class="results">
+        <section class="panel panel-negative">
+          <div class="panel-head">
+            <h2><span id="domestic-out">Korean Exchange</span> -> <span id="overseas-out">GateIO</span></h2>
+            <span class="hint">Negative gap only</span>
+          </div>
+          <div id="list-b2g" class="card-grid"></div>
+        </section>
+
+        <section class="panel panel-positive">
+          <div class="panel-head">
+            <h2><span id="overseas-in">GateIO</span> -> <span id="domestic-in">Korean Exchange</span></h2>
+            <span class="hint">Positive gap only</span>
+          </div>
+          <div id="list-g2b" class="card-grid"></div>
+        </section>
+      </main>
+
+      <section class="panel all-panel">
+        <div class="panel-head panel-head-stack">
+          <div class="panel-title">
+            <h2>All Coins</h2>
+            <span class="hint" id="all-count">--</span>
+          </div>
+          <div class="panel-controls">
+            <div class="panel-label">All Coins Source</div>
+            <div class="panel-toggle-groups">
+              <div class="toggle-group compact">
+                <button type="button" class="toggle-button" data-domestic="bithumb">Bithumb</button>
+                <button type="button" class="toggle-button" data-domestic="upbit">Upbit</button>
+              </div>
+              <div class="toggle-group compact">
+                <button type="button" class="toggle-button" data-overseas="gateio">GateIO</button>
+                <button type="button" class="toggle-button" data-overseas="bybit">Bybit</button>
+                <button type="button" class="toggle-button" data-overseas="okx">OKX</button>
+                <button type="button" class="toggle-button" data-overseas="hyperliquid">Hyperliquid</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <div class="table-head">
+            <div>#</div>
+            <div>Coin</div>
+            <div>Premium</div>
+            <div>Edge</div>
+            <div id="domestic-ask-header">Domestic Ask</div>
+            <div id="overseas-gap-header">GateIO Gap Price</div>
+          </div>
+          <div id="list-all" class="table-body"></div>
+        </div>
+      </section>
+    </div>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

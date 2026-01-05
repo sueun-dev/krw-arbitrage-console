@@ -1,0 +1,10 @@
+node_modules/
+dist/
+runtime/cache/
+test/*.js
+*.log
+.env
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+.vscode/

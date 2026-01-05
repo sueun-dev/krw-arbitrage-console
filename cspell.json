@@ -1,0 +1,16 @@
+{
+  "version": "0.2",
+  "words": [
+    "BITHUMB",
+    "Bithumb",
+    "GATEIO",
+    "GateIO",
+    "USDT",
+    "USDTKRW",
+    "bithumb",
+    "dotenv",
+    "gateio",
+    "opps"
+  ],
+  "ignorePaths": ["**/__pycache__/**"]
+}

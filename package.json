@@ -1,0 +1,35 @@
+{
+  "name": "arbitrage",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Bithumb ↔ GateIO arbitrage CLI",
+  "license": "UNLICENSED",
+  "type": "commonjs",
+  "bin": {
+    "arbitrage": "dist/app.js"
+  },
+  "scripts": {
+    "dev": "tsx src/app.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/app.js",
+    "web": "tsx src/web.ts",
+    "start:web": "node dist/web.js",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "ccxt": "^4.5.4",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.7",
+    "@eslint/js": "^9.19.0",
+    "@typescript-eslint/eslint-plugin": "^8.25.0",
+    "@typescript-eslint/parser": "^8.25.0",
+    "eslint": "^9.19.0",
+    "globals": "^15.13.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}
