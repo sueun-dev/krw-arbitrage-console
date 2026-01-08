@@ -147,6 +147,43 @@ body {
 }
 
 .controls {
+  margin-bottom: 28px;
+}
+
+.controls-details {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.controls-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  list-style: none;
+  cursor: pointer;
+  font-family: "Sora", sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+
+.controls-summary::-webkit-details-marker {
+  display: none;
+}
+
+.controls-hint {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+}
+
+.controls-panel {
   display: grid;
   grid-template-columns: 1fr;
   gap: 20px;
@@ -155,7 +192,7 @@ body {
   border-radius: 20px;
   padding: 20px;
   box-shadow: var(--shadow);
-  margin-bottom: 28px;
+  margin-top: 12px;
 }
 
 .control-block {
@@ -246,6 +283,10 @@ body {
   border-top: 4px solid var(--accent);
 }
 
+.panel-route {
+  border-top: 4px solid var(--accent);
+}
+
 .panel-head {
   display: flex;
   justify-content: space-between;
@@ -254,6 +295,36 @@ body {
   margin-bottom: 16px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--line);
+}
+
+.panel-head-title {
+  display: grid;
+  gap: 4px;
+}
+
+.panel-head-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.sort-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sort-label {
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.panel-sub {
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .panel-head.panel-head-stack {
@@ -312,6 +383,13 @@ body {
   gap: 12px;
 }
 
+#list-routes {
+  max-height: 520px;
+  overflow: auto;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+}
+
 .row-card {
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -353,6 +431,12 @@ body {
   background: rgba(42, 157, 143, 0.12);
   color: var(--accent-2);
   border-color: rgba(42, 157, 143, 0.25);
+}
+
+.pill.cycle {
+  background: rgba(31, 157, 112, 0.12);
+  color: var(--good);
+  border-color: rgba(31, 157, 112, 0.25);
 }
 
 .premium {

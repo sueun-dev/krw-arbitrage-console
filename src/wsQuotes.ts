@@ -7,6 +7,7 @@ const DEFAULT_UPBIT_BATCH = 100;
 const DEFAULT_BYBIT_BATCH = 10;
 const DEFAULT_OKX_BATCH = 20;
 const DEFAULT_HYPERLIQUID_BATCH = 50;
+const DEFAULT_LIGHTER_BATCH = 50;
 const GATEIO_SPOT_URL = "wss://api.gateio.ws/ws/v4/";
 const GATEIO_FUTURES_URL = "wss://fx-ws.gateio.ws/v4/ws/usdt";
 const BITHUMB_URL = "wss://pubwss.bithumb.com/pub/ws";
@@ -15,6 +16,7 @@ const BYBIT_SPOT_URL = "wss://stream.bybit.com/v5/public/spot";
 const BYBIT_LINEAR_URL = "wss://stream.bybit.com/v5/public/linear";
 const OKX_PUBLIC_URL = "wss://ws.okx.com:8443/ws/v5/public";
 const HYPERLIQUID_URL = "wss://api.hyperliquid.xyz/ws";
+const LIGHTER_URL = "wss://mainnet.zklighter.elliot.ai/stream";
 
 function parseJsonMessage(data: unknown): any | null {
   if (typeof data === "string") {
@@ -526,6 +528,103 @@ export class GateioFuturesBookTickerWs extends QuoteCache {
     }
   }
 }
+
+class LighterOrderbookWs extends QuoteCache {
+  private sockets: ReconnectingWebSocket[] = [];
+  private symbols: string[];
+  private books = new Map<string, { bids: Map<number, number>; asks: Map<number, number>; initialized: boolean }>();
+
+  constructor(symbols: string[], staleMs = DEFAULT_STALE_MS) {
+    super(staleMs);
+    this.symbols = uniq(symbols);
+    this.connect();
+  }
+
+  close(): void {
+    for (const ws of this.sockets) ws.close();
+    this.sockets = [];
+  }
+
+  private connect(): void {
+    if (!this.symbols.length) return;
+    for (const batch of chunk(this.symbols, DEFAULT_LIGHTER_BATCH)) {
+      let client: ReconnectingWebSocket;
+      client = new ReconnectingWebSocket(LIGHTER_URL, {
+        name: "lighter",
+        onOpen: () => this.subscribe(client, batch),
+        onMessage: (msg) => this.handleMessage(msg),
+      });
+      this.sockets.push(client);
+      client.connect();
+    }
+  }
+
+  private subscribe(ws: ReconnectingWebSocket, batch: string[]): void {
+    if (!batch.length) return;
+    for (const marketId of batch) {
+      ws.send({ type: "subscribe", channel: `order_book/${marketId}` });
+    }
+  }
+
+  private parseLevel(level: any): { price: number; size: number } | null {
+    const price = Number(level?.price ?? level?.[0] ?? 0);
+    const size = Number(level?.size ?? level?.[1] ?? 0);
+    if (!Number.isFinite(price) || !Number.isFinite(size)) return null;
+    return { price, size };
+  }
+
+  private applyLevels(target: Map<number, number>, levels: any[]): void {
+    for (const level of levels) {
+      const parsed = this.parseLevel(level);
+      if (!parsed) continue;
+      if (parsed.size > 0) target.set(parsed.price, parsed.size);
+      else target.delete(parsed.price);
+    }
+  }
+
+  private handleMessage(message: any): void {
+    const channel = typeof message?.channel === "string" ? message.channel : "";
+    if (!channel) return;
+    const symbol = channel.startsWith("order_book:")
+      ? channel.slice("order_book:".length)
+      : channel.startsWith("order_book/")
+        ? channel.slice("order_book/".length)
+        : "";
+    if (!symbol) return;
+    const payload = message?.order_book;
+    if (!payload || typeof payload !== "object") return;
+
+    const bids = Array.isArray(payload?.bids) ? payload.bids : [];
+    const asks = Array.isArray(payload?.asks) ? payload.asks : [];
+    let book = this.books.get(symbol);
+    if (!book) {
+      book = { bids: new Map(), asks: new Map(), initialized: false };
+      this.books.set(symbol, book);
+    }
+    const messageType = typeof message?.type === "string" ? message.type : "";
+    if (!book.initialized || messageType.includes("snapshot")) {
+      book.bids.clear();
+      book.asks.clear();
+      book.initialized = true;
+    }
+
+    this.applyLevels(book.bids, bids);
+    this.applyLevels(book.asks, asks);
+
+    let bestBid = 0;
+    for (const price of book.bids.keys()) {
+      if (price > bestBid) bestBid = price;
+    }
+    let bestAsk = 0;
+    for (const price of book.asks.keys()) {
+      if (price > 0) bestAsk = bestAsk > 0 ? Math.min(bestAsk, price) : price;
+    }
+    if (bestBid > 0 && bestAsk > 0) this.setQuote(symbol, { bid: bestBid, ask: bestAsk });
+  }
+}
+
+export class LighterSpotOrderbookWs extends LighterOrderbookWs {}
+export class LighterPerpOrderbookWs extends LighterOrderbookWs {}
 
 class HyperliquidOrderbookWs extends QuoteCache {
   private sockets: ReconnectingWebSocket[] = [];

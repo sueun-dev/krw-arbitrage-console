@@ -24,6 +24,7 @@ import {
   bybitSpotAndPerpSymbols,
   gateioSpotAndPerpSymbols,
   hyperliquidSpotAndPerpSymbols,
+  lighterSpotAndPerpSymbols,
   okxSpotAndPerpSymbols,
   upbitKrwSymbolsRest,
 } from "./symbolUniverse";
@@ -35,6 +36,8 @@ import {
   GateioSpotTickerWs,
   HyperliquidPerpOrderbookWs,
   HyperliquidSpotOrderbookWs,
+  LighterPerpOrderbookWs,
+  LighterSpotOrderbookWs,
   OkxPerpTickerWs,
   OkxSpotTickerWs,
   UpbitOrderbookWs,
@@ -59,12 +62,14 @@ const DEFAULT_CONFIG: WatchConfig = {
   domesticExchange: "bithumb",
   overseasExchange: "gateio",
 };
+const AUTO_MAX_ROWS_PER_PAIR = 200;
+const AUTO_MAX_ROWS_TOTAL = 400;
 
 const PORT = Number(process.env.PORT ?? 5177);
 const publicDir = path.join(process.cwd(), "public");
 
 const DOMESTIC_EXCHANGES: DomesticExchange[] = ["bithumb", "upbit"];
-const OVERSEAS_EXCHANGES: OverseasExchange[] = ["gateio", "bybit", "okx", "hyperliquid"];
+const OVERSEAS_EXCHANGES: OverseasExchange[] = ["gateio", "bybit", "okx", "hyperliquid", "lighter"];
 
 let currentConfig: WatchConfig = { ...DEFAULT_CONFIG };
 const sharedOverseas: Record<OverseasExchange, SharedOverseasResources | null> = {
@@ -72,6 +77,7 @@ const sharedOverseas: Record<OverseasExchange, SharedOverseasResources | null> =
   bybit: null,
   okx: null,
   hyperliquid: null,
+  lighter: null,
 };
 const sharedDomestic: Record<DomesticExchange, SharedDomesticResources | null> = {
   bithumb: null,
@@ -82,41 +88,48 @@ const overseasInitState: Record<OverseasExchange, { attempts: number; timer: Nod
   bybit: { attempts: 0, timer: null, inFlight: false },
   okx: { attempts: 0, timer: null, inFlight: false },
   hyperliquid: { attempts: 0, timer: null, inFlight: false },
+  lighter: { attempts: 0, timer: null, inFlight: false },
 };
 const controllers: Record<DomesticExchange, Record<OverseasExchange, AbortController | null>> = {
-  bithumb: { gateio: null, bybit: null, okx: null, hyperliquid: null },
-  upbit: { gateio: null, bybit: null, okx: null, hyperliquid: null },
+  bithumb: { gateio: null, bybit: null, okx: null, hyperliquid: null, lighter: null },
+  upbit: { gateio: null, bybit: null, okx: null, hyperliquid: null, lighter: null },
 };
 const lastPayloads: Record<DomesticExchange, Record<OverseasExchange, WatchReverseTick | null>> = {
-  bithumb: { gateio: null, bybit: null, okx: null, hyperliquid: null },
-  upbit: { gateio: null, bybit: null, okx: null, hyperliquid: null },
+  bithumb: { gateio: null, bybit: null, okx: null, hyperliquid: null, lighter: null },
+  upbit: { gateio: null, bybit: null, okx: null, hyperliquid: null, lighter: null },
 };
+let lastAutoPayload: WatchReverseTick | null = null;
 const lastStatuses: Record<DomesticExchange, Record<OverseasExchange, WatchStatus | null>> = {
-  bithumb: { gateio: null, bybit: null, okx: null, hyperliquid: null },
-  upbit: { gateio: null, bybit: null, okx: null, hyperliquid: null },
+  bithumb: { gateio: null, bybit: null, okx: null, hyperliquid: null, lighter: null },
+  upbit: { gateio: null, bybit: null, okx: null, hyperliquid: null, lighter: null },
 };
 const clientsByPair: Record<DomesticExchange, Record<OverseasExchange, Set<http.ServerResponse>>> = {
-  bithumb: { gateio: new Set(), bybit: new Set(), okx: new Set(), hyperliquid: new Set() },
-  upbit: { gateio: new Set(), bybit: new Set(), okx: new Set(), hyperliquid: new Set() },
+  bithumb: { gateio: new Set(), bybit: new Set(), okx: new Set(), hyperliquid: new Set(), lighter: new Set() },
+  upbit: { gateio: new Set(), bybit: new Set(), okx: new Set(), hyperliquid: new Set(), lighter: new Set() },
 };
+const autoClients = new Set<http.ServerResponse>();
 
 async function buildSharedOverseasResources(overseas: OverseasExchange): Promise<SharedOverseasResources> {
   const gateSpot =
-    overseas === "bybit"
-      ? await createBybitSpot(false)
-      : overseas === "okx"
-        ? await createOkxSpot(false)
-        : overseas === "hyperliquid"
-          ? await createHyperliquidSpot(false)
-          : await createGateioSpot(false, false);
+    overseas === "lighter"
+      ? undefined
+      : overseas === "bybit"
+        ? await createBybitSpot(false)
+        : overseas === "okx"
+          ? await createOkxSpot(false)
+          : overseas === "hyperliquid"
+            ? await createHyperliquidSpot(false)
+            : await createGateioSpot(false, false);
   const gatePerp =
-    overseas === "bybit"
-      ? await createBybitPerp(false)
-      : overseas === "okx"
-        ? await createOkxPerp(false)
-        : overseas === "hyperliquid"
-          ? await createHyperliquidPerp(false)
-          : await createGateioPerp(false, true);
+    overseas === "lighter"
+      ? undefined
+      : overseas === "bybit"
+        ? await createBybitPerp(false)
+        : overseas === "okx"
+          ? await createOkxPerp(false)
+          : overseas === "hyperliquid"
+            ? await createHyperliquidPerp(false)
+            : await createGateioPerp(false, true);
 
   const [bSymbols, uSymbols, gateioSymbols] = await Promise.all([
     bithumbKrwSymbolsRest().catch((err) => {
@@ -133,57 +146,75 @@ async function buildSharedOverseasResources(overseas: OverseasExchange): Promise
         ? okxSpotAndPerpSymbols(gateSpot, gatePerp)
         : overseas === "hyperliquid"
           ? hyperliquidSpotAndPerpSymbols(gateSpot, gatePerp)
-          : gateioSpotAndPerpSymbols(gateSpot, gatePerp),
+          : overseas === "lighter"
+            ? lighterSpotAndPerpSymbols()
+            : gateioSpotAndPerpSymbols(gateSpot, gatePerp),
   ]);
 
-    const coins = new Set<string>();
-    for (const coin of Object.keys(bSymbols)) {
-      if (coin in gateioSymbols.perp) coins.add(coin);
-    }
-    for (const coin of Object.keys(uSymbols)) {
-      if (coin in gateioSymbols.perp) coins.add(coin);
-    }
+  const coins = new Set<string>();
+  for (const coin of Object.keys(bSymbols)) {
+    if (coin in gateioSymbols.perp) coins.add(coin);
+  }
+  for (const coin of Object.keys(uSymbols)) {
+    if (coin in gateioSymbols.perp) coins.add(coin);
+  }
 
-    const perpIds = new Set<string>();
-    const spotIds = new Set<string>();
-    for (const coin of coins) {
-      const perpSymbol = gateioSymbols.perp[coin];
-      const perpMarket = (gatePerp as any).market?.(perpSymbol) ?? (gatePerp as any).markets?.[perpSymbol];
-      const perpWsSymbol =
-        overseas === "hyperliquid"
-          ? String(perpMarket?.baseName ?? perpMarket?.base ?? "")
+  const perpIds = new Set<string>();
+  const spotIds = new Set<string>();
+  for (const coin of coins) {
+    const perpSymbol = gateioSymbols.perp[coin];
+    const perpMarket =
+      overseas === "lighter"
+        ? null
+        : ((gatePerp as any)?.market?.(perpSymbol) ?? (gatePerp as any)?.markets?.[perpSymbol]);
+    const perpWsSymbol =
+      overseas === "hyperliquid"
+        ? String(perpMarket?.baseName ?? perpMarket?.base ?? "")
+        : overseas === "lighter"
+          ? String(perpSymbol ?? "")
           : perpMarket?.id
             ? String(perpMarket.id)
             : "";
-      if (perpWsSymbol) perpIds.add(perpWsSymbol);
+    if (perpWsSymbol) perpIds.add(perpWsSymbol);
 
-      const spotSymbol = gateioSymbols.spot[coin];
-      if (spotSymbol) {
+    const spotSymbol = gateioSymbols.spot[coin];
+    if (spotSymbol) {
+      if (overseas === "lighter") {
+        spotIds.add(String(spotSymbol));
+      } else {
         const spotMarket = (gateSpot as any).market?.(spotSymbol) ?? (gateSpot as any).markets?.[spotSymbol];
         if (spotMarket?.id) spotIds.add(String(spotMarket.id));
       }
     }
+  }
 
-    const gatePerpWs = perpIds.size
-      ? overseas === "bybit"
-        ? new BybitPerpOrderbookWs([...perpIds])
-        : overseas === "okx"
-          ? new OkxPerpTickerWs([...perpIds])
-          : overseas === "hyperliquid"
-            ? new HyperliquidPerpOrderbookWs([...perpIds])
+  const gatePerpWs = perpIds.size
+    ? overseas === "bybit"
+      ? new BybitPerpOrderbookWs([...perpIds])
+      : overseas === "okx"
+        ? new OkxPerpTickerWs([...perpIds])
+        : overseas === "hyperliquid"
+          ? new HyperliquidPerpOrderbookWs([...perpIds])
+          : overseas === "lighter"
+            ? new LighterPerpOrderbookWs([...perpIds])
             : new GateioFuturesBookTickerWs([...perpIds])
-      : undefined;
-    const gateSpotWs = spotIds.size
-      ? overseas === "bybit"
-        ? new BybitSpotOrderbookWs([...spotIds])
-        : overseas === "okx"
-          ? new OkxSpotTickerWs([...spotIds])
-          : overseas === "hyperliquid"
-            ? new HyperliquidSpotOrderbookWs([...spotIds])
+    : undefined;
+  const gateSpotWs = spotIds.size
+    ? overseas === "bybit"
+      ? new BybitSpotOrderbookWs([...spotIds])
+      : overseas === "okx"
+        ? new OkxSpotTickerWs([...spotIds])
+        : overseas === "hyperliquid"
+          ? new HyperliquidSpotOrderbookWs([...spotIds])
+          : overseas === "lighter"
+            ? new LighterSpotOrderbookWs([...spotIds])
             : new GateioSpotTickerWs([...spotIds])
-      : undefined;
+    : undefined;
 
-  return { exchange: overseas, spot: gateSpot, perp: gatePerp, perpWs: gatePerpWs, spotWs: gateSpotWs };
+  const shared: SharedOverseasResources = { exchange: overseas, perpWs: gatePerpWs, spotWs: gateSpotWs };
+  if (gateSpot) shared.spot = gateSpot;
+  if (gatePerp) shared.perp = gatePerp;
+  return shared;
 }
 
 async function ensureSharedOverseas(overseas: OverseasExchange): Promise<SharedOverseasResources> {
@@ -267,6 +298,7 @@ function parseOverseasExchange(value: unknown, fallback: OverseasExchange): Over
   if (raw === "bybit") return "bybit";
   if (raw === "okx") return "okx";
   if (raw === "hyperliquid") return "hyperliquid";
+  if (raw === "lighter") return "lighter";
   if (raw === "gateio") return "gateio";
   return fallback;
 }
@@ -287,6 +319,17 @@ function broadcast(domestic: DomesticExchange, overseas: OverseasExchange, paylo
   for (const res of clientsByPair[domestic][overseas]) {
     res.write(data);
   }
+
+  if (autoClients.size) {
+    const autoPayload = buildAggregatePayload(payload);
+    if (autoPayload) {
+      lastAutoPayload = autoPayload;
+      const autoData = `event: tick\ndata: ${JSON.stringify(autoPayload)}\n\n`;
+      for (const res of autoClients) {
+        res.write(autoData);
+      }
+    }
+  }
 }
 
 function broadcastStatus(domestic: DomesticExchange, overseas: OverseasExchange, status: WatchStatus): void {
@@ -295,6 +338,52 @@ function broadcastStatus(domestic: DomesticExchange, overseas: OverseasExchange,
   for (const res of clientsByPair[domestic][overseas]) {
     res.write(data);
   }
+}
+
+function buildAggregatePayload(base: WatchReverseTick): WatchReverseTick | null {
+  const rows: WatchReverseTick["rows"] = [];
+  for (const domestic of DOMESTIC_EXCHANGES) {
+    for (const overseas of OVERSEAS_EXCHANGES) {
+      const payload = lastPayloads[domestic][overseas];
+      if (!payload || !Array.isArray(payload.rows)) continue;
+      const slice = payload.rows.slice(0, AUTO_MAX_ROWS_PER_PAIR);
+      for (const row of slice) {
+        if (row.missing) continue;
+        rows.push({
+          ...row,
+          domesticExchange: row.domesticExchange ?? payload.config?.domesticExchange ?? domestic,
+          overseasExchange: row.overseasExchange ?? payload.config?.overseasExchange ?? overseas,
+        });
+      }
+    }
+  }
+
+  if (!rows.length) return null;
+
+  rows.sort((a, b) => {
+    const aEdge = (a.netEdgeKrw ?? a.edgeKrw ?? -Infinity) as number;
+    const bEdge = (b.netEdgeKrw ?? b.edgeKrw ?? -Infinity) as number;
+    const edgeDiff = bEdge - aEdge;
+    if (edgeDiff !== 0) return edgeDiff;
+    const aPct = (a.netEdgePct ?? a.edgePct ?? -Infinity) as number;
+    const bPct = (b.netEdgePct ?? b.edgePct ?? -Infinity) as number;
+    const pctDiff = bPct - aPct;
+    if (pctDiff !== 0) return pctDiff;
+    return a.coin.localeCompare(b.coin);
+  });
+
+  const trimmed = rows.slice(0, AUTO_MAX_ROWS_TOTAL);
+  trimmed.forEach((row, idx) => {
+    row.rank = idx + 1;
+  });
+
+  return {
+    ...base,
+    mode: "auto",
+    rows: trimmed,
+    closeCoins: [],
+    farCoins: [],
+  };
 }
 
 async function startWatch(domestic: DomesticExchange, overseas: OverseasExchange, sharedOverseas: SharedOverseasResources): Promise<void> {
@@ -315,6 +404,7 @@ async function startWatch(domestic: DomesticExchange, overseas: OverseasExchange
       overseasExchange: overseas,
       fullUniverse: true,
       useWebsocket: true,
+      wsOnly: true,
       sharedOverseas,
       sharedDomestic: sharedDomesticResources,
     },
@@ -410,6 +500,32 @@ const server = http.createServer(async (req, res) => {
     clientsByPair[domestic][overseas].add(res);
     req.on("close", () => {
       clientsByPair[domestic][overseas].delete(res);
+    });
+    return;
+  }
+
+  if (url.pathname === "/api/watch-all") {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+    res.write(`event: ready\ndata: ${JSON.stringify({ ok: true })}\n\n`);
+    if (!lastAutoPayload) {
+      for (const domestic of DOMESTIC_EXCHANGES) {
+        for (const overseas of OVERSEAS_EXCHANGES) {
+          const payload = lastPayloads[domestic][overseas];
+          if (!payload) continue;
+          lastAutoPayload = buildAggregatePayload(payload);
+          break;
+        }
+        if (lastAutoPayload) break;
+      }
+    }
+    if (lastAutoPayload) res.write(`event: tick\ndata: ${JSON.stringify(lastAutoPayload)}\n\n`);
+    autoClients.add(res);
+    req.on("close", () => {
+      autoClients.delete(res);
     });
     return;
   }

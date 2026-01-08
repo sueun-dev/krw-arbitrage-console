@@ -8,3 +8,5 @@ export const BYBIT_SPOT_TAKER_FEE = 0.001;
 export const BYBIT_PERP_TAKER_FEE = 0.0006;
 export const HYPERLIQUID_SPOT_TAKER_FEE = 0.0007;
 export const HYPERLIQUID_PERP_TAKER_FEE = 0.00045;
+export const LIGHTER_SPOT_TAKER_FEE = 0.0;
+export const LIGHTER_PERP_TAKER_FEE = 0.0;

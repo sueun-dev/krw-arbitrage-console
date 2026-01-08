@@ -278,6 +278,51 @@ export async function hyperliquidSpotAndPerpSymbols(
   return { spot: spotSymbols, perp: perpSymbols };
 }
 
+export async function lighterSpotAndPerpSymbols(): Promise<{ spot: Record<string, string>; perp: Record<string, string> }> {
+  const spotSymbols: Record<string, string> = {};
+  const perpSymbols: Record<string, string> = {};
+  const payload = await fetchJson<any>("https://mainnet.zklighter.elliot.ai/api/v1/orderBooks", { timeoutMs: 8000 });
+  const entries = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.order_books)
+      ? payload.order_books
+      : [];
+  if (!entries.length) return { spot: spotSymbols, perp: perpSymbols };
+
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object") continue;
+    const status = typeof entry?.status === "string" ? entry.status.toLowerCase() : "";
+    if (status && status !== "active") continue;
+    const marketType = typeof entry?.market_type === "string" ? entry.market_type.toLowerCase() : "";
+    const symbol = typeof entry?.symbol === "string" ? entry.symbol : "";
+    const marketIdRaw = entry?.market_id ?? entry?.marketId ?? entry?.id;
+    const marketId =
+      typeof marketIdRaw === "string" || typeof marketIdRaw === "number" ? String(marketIdRaw) : "";
+    if (!marketId) continue;
+
+    if (marketType === "spot") {
+      const [baseRaw, quoteRaw] = symbol.split("/");
+      const base = baseRaw?.trim();
+      const quote = quoteRaw?.trim().toUpperCase();
+      if (!base || !quote) continue;
+      if (quote !== "USDC" && quote !== "USDT") continue;
+      spotSymbols[base.toUpperCase()] = marketId;
+      continue;
+    }
+
+    if (marketType === "perp" || marketType === "perpetual" || marketType === "swap") {
+      let base = symbol;
+      if (symbol.includes("/")) base = symbol.split("/")[0] ?? symbol;
+      else if (symbol.includes("-")) base = symbol.split("-")[0] ?? symbol;
+      base = base.trim();
+      if (!base) continue;
+      perpSymbols[base.toUpperCase()] = marketId;
+    }
+  }
+
+  return { spot: spotSymbols, perp: perpSymbols };
+}
+
 export async function refreshArbitrageSymbolUniverse(
   bithumb: Exchange,
   gateSpot: Exchange,

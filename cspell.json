@@ -5,12 +5,17 @@
     "Bithumb",
     "GATEIO",
     "GateIO",
+    "Hyperliquid",
     "USDT",
     "USDTKRW",
+    "Upbit",
     "bithumb",
+    "bybit",
     "dotenv",
     "gateio",
-    "opps"
+    "hyperliquid",
+    "opps",
+    "upbit"
   ],
   "ignorePaths": ["**/__pycache__/**"]
 }

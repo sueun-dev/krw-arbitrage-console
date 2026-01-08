@@ -17,6 +17,7 @@ Overseas:
 - OKX
 - Hyperliquid
 - Bybit (may be region-blocked in some locations)
+- Lighter
 
 ## How It Works
 
@@ -24,6 +25,7 @@ Overseas:
 - All clients subscribe to the same SSE stream. No per-user recalculation.
 - Premium is computed as: (KRW price - USDT price * USDT/KRW) / (USDT price * USDT/KRW).
 - Hyperliquid uses USDC markets; USDC is treated as USDT for premium conversion.
+- Lighter uses USDC markets; USDC is treated as USDT for premium conversion.
 
 ## Quick Start
 

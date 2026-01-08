@@ -20,6 +20,8 @@ import {
   GATEIO_SPOT_TAKER_FEE,
   HYPERLIQUID_PERP_TAKER_FEE,
   HYPERLIQUID_SPOT_TAKER_FEE,
+  LIGHTER_PERP_TAKER_FEE,
+  LIGHTER_SPOT_TAKER_FEE,
   OKX_PERP_TAKER_FEE,
   OKX_SPOT_TAKER_FEE,
   UPBIT_SPOT_TAKER_FEE,
@@ -46,6 +48,7 @@ import {
   gateioSpotAndPerpSymbols,
   getArbitrageSymbolUniverse,
   hyperliquidSpotAndPerpSymbols,
+  lighterSpotAndPerpSymbols,
   okxSpotAndPerpSymbols,
   upbitKrwSymbolsRest,
 } from "./symbolUniverse";
@@ -60,6 +63,8 @@ import {
   GateioSpotTickerWs,
   HyperliquidPerpOrderbookWs,
   HyperliquidSpotOrderbookWs,
+  LighterPerpOrderbookWs,
+  LighterSpotOrderbookWs,
   OkxPerpTickerWs,
   OkxSpotTickerWs,
   UpbitOrderbookWs,
@@ -71,6 +76,9 @@ const DEFAULT_SCAN_CONCURRENCY = 12;
 const DEFAULT_WATCH_INTERVAL_SEC = 1;
 const DEFAULT_WATCH_NOTIONAL_KRW = 5_000_000;
 const DEFAULT_SYMBOL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_B2G_BASIS_MAX_PCT = 0.2;
+const DEFAULT_G2B_BASIS_MAX_PCT = 0.2;
+const DEFAULT_CYCLE_LEG_LIMIT = 50;
 
 type WatchSymbolMaps = {
   updatedAt: number;
@@ -95,6 +103,14 @@ function sortReversePreferred(a: { premiumPct: number }, b: { premiumPct: number
 
 function sortPremiumAsc(a: { premiumPct: number; coin?: string }, b: { premiumPct: number; coin?: string }): number {
   const diff = a.premiumPct - b.premiumPct;
+  if (diff !== 0) return diff;
+  const aCoin = typeof a.coin === "string" ? a.coin : "";
+  const bCoin = typeof b.coin === "string" ? b.coin : "";
+  return aCoin.localeCompare(bCoin);
+}
+
+function sortPremiumDesc(a: { premiumPct: number; coin?: string }, b: { premiumPct: number; coin?: string }): number {
+  const diff = b.premiumPct - a.premiumPct;
   if (diff !== 0) return diff;
   const aCoin = typeof a.coin === "string" ? a.coin : "";
   const bCoin = typeof b.coin === "string" ? b.coin : "";
@@ -158,35 +174,52 @@ export type WatchTransfer = {
 export type WatchReverseRow = {
   rank: number;
   direction?: "b2g" | "g2b";
+  cycle?: boolean;
   coin: string;
+  outCoin?: string;
+  backCoin?: string;
+  domesticExchange?: "bithumb" | "upbit";
+  overseasExchange?: OverseasExchange;
   missing?: boolean;
   premiumPct?: number;
   edgeKrw?: number;
   edgePct?: number;
+  netEdgeKrw?: number;
+  netEdgePct?: number;
+  transferOk?: boolean;
   domesticAsk?: number;
+  domesticBid?: number;
   overseasBid?: number;
   gapSource?: "spot" | "perp";
   gateioSpotAsk?: number;
   gateioSpotBid?: number;
   gateioSpotSellUsdt?: number;
   spotVsPerpPct?: number;
+  outDomesticAsk?: number;
+  outOverseasBid?: number;
+  backOverseasAsk?: number;
+  backDomesticBid?: number;
+  outSpotVsPerpPct?: number;
+  backSpotVsPerpPct?: number;
   impact?: {
     domestic?: number;
     gateioSpot?: number;
     gateioPerp?: number;
   };
   transfer?: WatchTransfer;
+  transferOut?: WatchTransfer;
+  transferBack?: WatchTransfer;
   transferText?: string;
 };
 
-export type OverseasExchange = "gateio" | "bybit" | "okx" | "hyperliquid";
+export type OverseasExchange = "gateio" | "bybit" | "okx" | "hyperliquid" | "lighter";
 
 export type SharedOverseasResources = {
   exchange: OverseasExchange;
   spot?: any;
   perp?: any;
-  spotWs?: GateioSpotTickerWs | BybitSpotOrderbookWs | OkxSpotTickerWs | HyperliquidSpotOrderbookWs;
-  perpWs?: GateioFuturesBookTickerWs | BybitPerpOrderbookWs | OkxPerpTickerWs | HyperliquidPerpOrderbookWs;
+  spotWs?: GateioSpotTickerWs | BybitSpotOrderbookWs | OkxSpotTickerWs | HyperliquidSpotOrderbookWs | LighterSpotOrderbookWs;
+  perpWs?: GateioFuturesBookTickerWs | BybitPerpOrderbookWs | OkxPerpTickerWs | HyperliquidPerpOrderbookWs | LighterPerpOrderbookWs;
 };
 
 export type SharedDomesticResources = {
@@ -198,6 +231,7 @@ export type SharedDomesticResources = {
 export type WatchReverseTick = {
   tick: number;
   time: string;
+  mode?: "auto" | "pair";
   rate: {
     label: string;
     usdtKrw: number;
@@ -278,7 +312,9 @@ async function getWatchSymbolMaps(
         ? okxSpotAndPerpSymbols(gateSpot, gatePerp)
         : overseasExchange === "hyperliquid"
           ? hyperliquidSpotAndPerpSymbols(gateSpot, gatePerp)
-        : gateioSpotAndPerpSymbols(gateSpot, gatePerp),
+          : overseasExchange === "lighter"
+            ? lighterSpotAndPerpSymbols()
+          : gateioSpotAndPerpSymbols(gateSpot, gatePerp),
   ]);
   const entry: WatchSymbolMaps = {
     updatedAt: Date.now(),
@@ -910,6 +946,7 @@ export async function watchReverseTopN(
     concurrency?: number;
     notionalKrw?: number;
     useWebsocket?: boolean;
+    wsOnly?: boolean;
     fullUniverse?: boolean;
     domesticExchange?: "bithumb" | "upbit";
     overseasExchange?: OverseasExchange;
@@ -937,7 +974,11 @@ export async function watchReverseTopN(
         ? "okx"
         : options?.overseasExchange === "hyperliquid"
           ? "hyperliquid"
-          : "gateio";
+          : options?.overseasExchange === "lighter"
+            ? "lighter"
+            : "gateio";
+  const useLighter = overseasExchange === "lighter";
+  const wsOnly = useLighter ? true : options?.wsOnly ?? false;
   const domesticLabel = domesticExchange === "upbit" ? "Upbit" : "Bithumb";
   const overseasLabel =
     overseasExchange === "bybit"
@@ -946,7 +987,9 @@ export async function watchReverseTopN(
         ? "OKX"
         : overseasExchange === "hyperliquid"
           ? "Hyperliquid"
-          : "GateIO";
+          : overseasExchange === "lighter"
+            ? "Lighter"
+            : "GateIO";
   const domesticFeeRate = domesticExchange === "upbit" ? UPBIT_SPOT_TAKER_FEE : BITHUMB_SPOT_TAKER_FEE;
   const overseasSpotFeeRate =
     overseasExchange === "bybit"
@@ -955,7 +998,9 @@ export async function watchReverseTopN(
         ? OKX_SPOT_TAKER_FEE
         : overseasExchange === "hyperliquid"
           ? HYPERLIQUID_SPOT_TAKER_FEE
-        : GATEIO_SPOT_TAKER_FEE;
+          : overseasExchange === "lighter"
+            ? LIGHTER_SPOT_TAKER_FEE
+            : GATEIO_SPOT_TAKER_FEE;
   const overseasPerpFeeRate =
     overseasExchange === "bybit"
       ? BYBIT_PERP_TAKER_FEE
@@ -963,7 +1008,9 @@ export async function watchReverseTopN(
         ? OKX_PERP_TAKER_FEE
         : overseasExchange === "hyperliquid"
           ? HYPERLIQUID_PERP_TAKER_FEE
-        : GATEIO_PERP_TAKER_FEE;
+          : overseasExchange === "lighter"
+            ? LIGHTER_PERP_TAKER_FEE
+            : GATEIO_PERP_TAKER_FEE;
   const config = {
     topN,
     displayTopK,
@@ -990,28 +1037,37 @@ export async function watchReverseTopN(
   const domestic = { id: domesticExchange === "upbit" ? "upbit-rest" : "bithumb-rest" } as any;
   const gateSpot =
     sharedOverseas?.spot ??
-    (overseasExchange === "bybit"
-      ? await createBybitSpot(false)
-      : overseasExchange === "okx"
-        ? await createOkxSpot(false)
-        : overseasExchange === "hyperliquid"
-          ? await createHyperliquidSpot(false)
-          : await createGateioSpot(false, false));
+    (useLighter
+      ? undefined
+      : overseasExchange === "bybit"
+        ? await createBybitSpot(false)
+        : overseasExchange === "okx"
+          ? await createOkxSpot(false)
+          : overseasExchange === "hyperliquid"
+            ? await createHyperliquidSpot(false)
+            : await createGateioSpot(false, false));
   const gatePerp =
     sharedOverseas?.perp ??
-    (overseasExchange === "bybit"
-      ? await createBybitPerp(false)
-      : overseasExchange === "okx"
-        ? await createOkxPerp(false)
-        : overseasExchange === "hyperliquid"
-          ? await createHyperliquidPerp(false)
-          : await createGateioPerp(false, true));
-  const ownsGateSpot = !sharedOverseas?.spot;
-  const ownsGatePerp = !sharedOverseas?.perp;
+    (useLighter
+      ? undefined
+      : overseasExchange === "bybit"
+        ? await createBybitPerp(false)
+        : overseasExchange === "okx"
+          ? await createOkxPerp(false)
+          : overseasExchange === "hyperliquid"
+            ? await createHyperliquidPerp(false)
+            : await createGateioPerp(false, true));
+  const ownsGateSpot = !sharedOverseas?.spot && Boolean(gateSpot);
+  const ownsGatePerp = !sharedOverseas?.perp && Boolean(gatePerp);
   let wsClients: {
     domestic: BithumbOrderbookWs | UpbitOrderbookWs;
-    gatePerp: GateioFuturesBookTickerWs | BybitPerpOrderbookWs | OkxPerpTickerWs | HyperliquidPerpOrderbookWs;
-    gateSpot?: GateioSpotTickerWs | BybitSpotOrderbookWs | OkxSpotTickerWs | HyperliquidSpotOrderbookWs;
+    gatePerp:
+      | GateioFuturesBookTickerWs
+      | BybitPerpOrderbookWs
+      | OkxPerpTickerWs
+      | HyperliquidPerpOrderbookWs
+      | LighterPerpOrderbookWs;
+    gateSpot?: GateioSpotTickerWs | BybitSpotOrderbookWs | OkxSpotTickerWs | HyperliquidSpotOrderbookWs | LighterSpotOrderbookWs;
   } | null = null;
   let ownsDomesticWs = true;
   let ownsGatePerpWs = true;
@@ -1031,19 +1087,26 @@ export async function watchReverseTopN(
   ): { domesticPrice: number; overseasPrice: number; gapSource: "spot" | "perp"; useUnwind: boolean } | null => {
     const hasSpotBid = row.gateioSpotBid != null && row.gateioSpotBid > 0;
     const hasSpotAsk = row.gateioSpotAsk != null && row.gateioSpotAsk > 0;
+    const hasPerpBid = row.overseasBid > 0;
     const hasPerpAsk = row.overseasAsk != null && row.overseasAsk > 0;
-    const canReverse = row.domesticAsk > 0 && row.overseasBid > 0;
-    const canUnwind = row.domesticBid != null && row.domesticBid > 0 && (hasSpotAsk || hasPerpAsk);
+    const hasDomesticAsk = row.domesticAsk > 0;
+    const hasDomesticBid = row.domesticBid != null && row.domesticBid > 0;
+    if (direction === "b2g") {
+      if (!(hasDomesticAsk && hasSpotBid && hasPerpBid)) return null;
+      const basis = basisPct(row.gateioSpotBid as number, row.overseasBid);
+      if (basis > DEFAULT_B2G_BASIS_MAX_PCT) return null;
+      return { domesticPrice: row.domesticAsk, overseasPrice: row.gateioSpotBid as number, gapSource: "spot", useUnwind: false };
+    }
+    const canReverse = hasDomesticAsk && hasPerpBid;
+    const canUnwind = hasDomesticBid && (hasSpotAsk || hasPerpAsk);
     const useUnwind = direction === "g2b" && canUnwind;
     const useReverse = canReverse && (!useUnwind || !canUnwind);
     if (!useUnwind && !useReverse) return null;
 
     const domesticPrice = useUnwind ? (row.domesticBid as number) : row.domesticAsk;
-    const useSpot = direction === "b2g" ? hasSpotBid : direction === "g2b" ? hasSpotAsk : false;
+    const useSpot = direction === "g2b" ? hasSpotAsk : false;
     const overseasPrice = useSpot
-      ? direction === "b2g"
-        ? (row.gateioSpotBid as number)
-        : (row.gateioSpotAsk as number)
+      ? (row.gateioSpotAsk as number)
       : useUnwind
         ? row.overseasAsk
         : row.overseasBid;
@@ -1061,25 +1124,30 @@ export async function watchReverseTopN(
     const rateSource = usdtKrwRateSource();
     const initialRate = await usdtKrwRateContext(rateSource);
     if (!silent) console.info(`\n[WATCH] 초기 TOP ${topN} 리스트 계산 중... (총 ${candidates.length}개)`);
-    emitStatus({ phase: "init", message: "Fetching initial quotes...", total: candidates.length, done: 0 });
-    const initialRows = await snapshotReverseRowsForCoins({
-      domestic,
-      gateSpot,
-      gatePerp,
-      symbolMaps,
-      domesticFeeRate,
-      overseasSpotFeeRate,
-      overseasPerpFeeRate,
-      coins: candidates,
-      usdtKrw: initialRate.usdtKrw,
-      concurrency,
-      pricingMode: "ticker",
-      notionalKrw,
-      onProgress: (done, total) => {
-        if (!silent) console.info(`[WATCH] init progress: ${done}/${total}`);
-        emitStatus({ phase: "init", message: `Init progress ${done}/${total}`, done, total });
-      },
-    });
+    let initialRows: SnapshotRow[] = [];
+    if (!wsOnly) {
+      emitStatus({ phase: "init", message: "Fetching initial quotes...", total: candidates.length, done: 0 });
+      initialRows = await snapshotReverseRowsForCoins({
+        domestic,
+        gateSpot,
+        gatePerp,
+        symbolMaps,
+        domesticFeeRate,
+        overseasSpotFeeRate,
+        overseasPerpFeeRate,
+        coins: candidates,
+        usdtKrw: initialRate.usdtKrw,
+        concurrency,
+        pricingMode: "ticker",
+        notionalKrw,
+        onProgress: (done, total) => {
+          if (!silent) console.info(`[WATCH] init progress: ${done}/${total}`);
+          emitStatus({ phase: "init", message: `Init progress ${done}/${total}`, done, total });
+        },
+      });
+    } else {
+      emitStatus({ phase: "init", message: "WebSocket-only mode: waiting for live quotes..." });
+    }
     if (!initialRows.length) {
       emitStatus({ phase: "init", message: "Initial quotes empty; falling back to websocket updates." });
     } else {
@@ -1096,7 +1164,7 @@ export async function watchReverseTopN(
             return { row, premium };
           })
           .filter((entry): entry is { row: SnapshotRow; premium: number } => Boolean(entry))
-          .sort((a, b) => a.premium - b.premium)
+          .sort((a, b) => sortPremiumAsc({ premiumPct: a.premium, coin: a.row.coin }, { premiumPct: b.premium, coin: b.row.coin }))
       : [];
     const initialClosestCoins = initialB2G.slice(0, Math.min(displayTopK, initialB2G.length)).map((entry) => entry.row.coin);
 
@@ -1110,7 +1178,7 @@ export async function watchReverseTopN(
             return { row, premium };
           })
           .filter((entry): entry is { row: SnapshotRow; premium: number } => Boolean(entry))
-          .sort((a, b) => b.premium - a.premium)
+          .sort((a, b) => sortPremiumDesc({ premiumPct: a.premium, coin: a.row.coin }, { premiumPct: b.premium, coin: b.row.coin }))
       : [];
     const initialFarCoins = initialG2B.slice(0, Math.min(displayFarK, initialG2B.length)).map((entry) => entry.row.coin);
 
@@ -1142,7 +1210,7 @@ export async function watchReverseTopN(
     let farCoins = initialFarCoins;
 
     const wsEnv = String(process.env.ARB_USE_WS ?? "1").toLowerCase();
-    const useWebsocket = options?.useWebsocket ?? (wsEnv !== "0" && wsEnv !== "false");
+    const useWebsocket = useLighter ? true : (options?.useWebsocket ?? (wsEnv !== "0" && wsEnv !== "false"));
     type WsSymbolMap = {
       coin: string;
       domesticWsSymbol: string;
@@ -1166,21 +1234,30 @@ export async function watchReverseTopN(
           const pSymbol = symbolMaps.gateioPerpSymbols[coin];
           if (!dSymbol || !pSymbol) continue;
 
-          const pMarket = (gatePerp as any).market?.(pSymbol) ?? (gatePerp as any).markets?.[pSymbol];
+          const pMarket =
+            overseasExchange === "lighter"
+              ? null
+              : ((gatePerp as any)?.market?.(pSymbol) ?? (gatePerp as any)?.markets?.[pSymbol]);
           const dWsSymbol = dSymbol;
           const pWsSymbol =
             overseasExchange === "hyperliquid"
               ? String(pMarket?.baseName ?? pMarket?.base ?? "")
-              : pMarket?.id
-                ? String(pMarket.id)
-                : "";
+              : overseasExchange === "lighter"
+                ? String(pSymbol)
+                : pMarket?.id
+                  ? String(pMarket.id)
+                  : "";
           if (!dWsSymbol || !pWsSymbol) continue;
 
           let sWsSymbol: string | undefined;
-          const sSymbol = gateSpot ? symbolMaps.gateioSpotSymbols?.[coin] : undefined;
-          if (gateSpot && sSymbol) {
-            const sMarket = (gateSpot as any).market?.(sSymbol) ?? (gateSpot as any).markets?.[sSymbol];
-            if (sMarket?.id) sWsSymbol = String(sMarket.id);
+          const sSymbol = symbolMaps.gateioSpotSymbols?.[coin];
+          if (sSymbol) {
+            if (overseasExchange === "lighter") {
+              sWsSymbol = String(sSymbol);
+            } else if (gateSpot) {
+              const sMarket = (gateSpot as any).market?.(sSymbol) ?? (gateSpot as any).markets?.[sSymbol];
+              if (sMarket?.id) sWsSymbol = String(sMarket.id);
+            }
           }
 
           maps.push({
@@ -1209,7 +1286,9 @@ export async function watchReverseTopN(
                 ? new OkxPerpTickerWs([...pSymbols])
                 : overseasExchange === "hyperliquid"
                   ? new HyperliquidPerpOrderbookWs([...pSymbols])
-                : new GateioFuturesBookTickerWs([...pSymbols]));
+                  : overseasExchange === "lighter"
+                    ? new LighterPerpOrderbookWs([...pSymbols])
+                  : new GateioFuturesBookTickerWs([...pSymbols]));
           const gateSpotWs =
             sharedGateSpotWs ??
             (sSymbols.size
@@ -1219,7 +1298,9 @@ export async function watchReverseTopN(
                   ? new OkxSpotTickerWs([...sSymbols])
                   : overseasExchange === "hyperliquid"
                     ? new HyperliquidSpotOrderbookWs([...sSymbols])
-                  : new GateioSpotTickerWs([...sSymbols])
+                    : overseasExchange === "lighter"
+                      ? new LighterSpotOrderbookWs([...sSymbols])
+                    : new GateioSpotTickerWs([...sSymbols])
               : undefined);
           ownsDomesticWs = !sharedDomestic?.ws;
           ownsGatePerpWs = !sharedGatePerpWs;
@@ -1328,9 +1409,8 @@ export async function watchReverseTopN(
       direction: "b2g" | "g2b",
       row: {
         coin: string;
-        domesticAsk: number;
-        overseasBid: number;
-        gateioSpotBid?: number;
+        domesticPriceKrw: number;
+        overseasPriceUsdt: number;
       },
       usdtKrw: number,
     ): WatchTransfer | undefined => {
@@ -1352,13 +1432,11 @@ export async function watchReverseTopN(
       const feeToKrw = (feeCoin: number): number | null => {
         if (!(feeCoin > 0)) return null;
         if (mode === "b2g") {
-          if (!(row.domesticAsk > 0)) return null;
-          return feeCoin * row.domesticAsk;
+          if (!(row.overseasPriceUsdt > 0 && usdtKrw > 0)) return null;
+          return feeCoin * row.overseasPriceUsdt * usdtKrw;
         }
-        // g2b: prefer overseas spot bid if available; otherwise use perp price.
-        const usdtPrice = row.gateioSpotBid && row.gateioSpotBid > 0 ? row.gateioSpotBid : row.overseasBid;
-        if (!(usdtPrice > 0 && usdtKrw > 0)) return null;
-        return feeCoin * usdtPrice * usdtKrw;
+        if (!(row.domesticPriceKrw > 0)) return null;
+        return feeCoin * row.domesticPriceKrw;
       };
 
       const chains: WatchTransferChain[] = [];
@@ -1381,6 +1459,23 @@ export async function watchReverseTopN(
       return { direction: mode, chains };
     };
 
+    const evaluateTransfer = (
+      transfer: WatchTransfer | undefined,
+      baseQty: number | null,
+    ): { transferOk: boolean; feeKrw: number | null; feeCoin: number | null } => {
+      if (!transfer || !transfer.chains.length) return { transferOk: false, feeKrw: null, feeCoin: null };
+      if (!(baseQty && Number.isFinite(baseQty) && baseQty > 0)) return { transferOk: false, feeKrw: null, feeCoin: null };
+
+      let bestChain: WatchTransferChain | null = null;
+      for (const chain of transfer.chains) {
+        if (chain.feeKrw == null || !Number.isFinite(chain.feeKrw)) continue;
+        if (chain.minCoin != null && baseQty < chain.minCoin) continue;
+        if (!bestChain || chain.feeKrw < (bestChain.feeKrw ?? Infinity)) bestChain = chain;
+      }
+      if (!bestChain || bestChain.feeKrw == null) return { transferOk: false, feeKrw: null, feeCoin: null };
+      return { transferOk: true, feeKrw: bestChain.feeKrw, feeCoin: bestChain.feeCoin ?? null };
+    };
+
     let printedHeader = false;
 
     let tick = 0;
@@ -1400,7 +1495,7 @@ export async function watchReverseTopN(
         let freshRows: SnapshotRow[] = [];
         if (wsClients) {
           freshRows = buildRowsFromWsQuotes(lastRate.usdtKrw);
-          if (!freshRows.length) {
+          if (!freshRows.length && !wsOnly) {
             freshRows = await snapshotReverseRowsForCoins({
               domestic,
               gateSpot,
@@ -1415,7 +1510,7 @@ export async function watchReverseTopN(
               pricingMode: "ticker",
               notionalKrw,
             });
-          } else if (tick - lastFallbackTick >= fallbackEveryTicks) {
+          } else if (!wsOnly && tick - lastFallbackTick >= fallbackEveryTicks) {
             const freshSet = new Set(freshRows.map((row) => row.coin));
             const missingCoins = watchCoins.filter((coin) => !freshSet.has(coin));
             if (missingCoins.length) {
@@ -1438,20 +1533,24 @@ export async function watchReverseTopN(
             }
           }
         } else {
-          freshRows = await snapshotReverseRowsForCoins({
-            domestic,
-            gateSpot,
-            gatePerp,
-            symbolMaps,
-            domesticFeeRate,
-            overseasSpotFeeRate,
-            overseasPerpFeeRate,
-            coins: watchCoins,
-            usdtKrw: lastRate.usdtKrw,
-            concurrency,
-            pricingMode: "ticker",
-            notionalKrw,
-          });
+          if (!wsOnly) {
+            freshRows = await snapshotReverseRowsForCoins({
+              domestic,
+              gateSpot,
+              gatePerp,
+              symbolMaps,
+              domesticFeeRate,
+              overseasSpotFeeRate,
+              overseasPerpFeeRate,
+              coins: watchCoins,
+              usdtKrw: lastRate.usdtKrw,
+              concurrency,
+              pricingMode: "ticker",
+              notionalKrw,
+            });
+          } else {
+            emitStatus({ phase: "error", message: "WebSocket-only mode requires active WS feeds." });
+          }
         }
         for (const row of freshRows) lastByCoin[row.coin] = row;
 
@@ -1475,13 +1574,14 @@ export async function watchReverseTopN(
           const { domesticPrice, overseasPrice, gapSource, useUnwind } = pricing;
           const premium = premiumPct(domesticPrice, overseasPrice, lastRate.usdtKrw);
 
+          let baseQty: number | null = null;
           let edgeKrw = 0;
           if (useUnwind) {
-            const baseQty = notionalKrw / (overseasPrice * lastRate.usdtKrw);
+            baseQty = notionalKrw / (overseasPrice * lastRate.usdtKrw);
             const domesticKrw = baseQty * domesticPrice;
             edgeKrw = domesticKrw - notionalKrw;
           } else {
-            const baseQty = notionalKrw / domesticPrice;
+            baseQty = notionalKrw / domesticPrice;
             const overseasKrw = baseQty * overseasPrice * lastRate.usdtKrw;
             edgeKrw = overseasKrw - notionalKrw;
           }
@@ -1490,18 +1590,26 @@ export async function watchReverseTopN(
           const transfer = includeTransfer
             ? transferInfoForRow(
                 direction,
-                { coin: row.coin, domesticAsk: domesticPrice, overseasBid: overseasPrice, gateioSpotBid: row.gateioSpotBid },
+                { coin: row.coin, domesticPriceKrw: domesticPrice, overseasPriceUsdt: overseasPrice },
                 lastRate.usdtKrw,
               )
             : undefined;
+          const transferEval = includeTransfer ? evaluateTransfer(transfer, baseQty) : { transferOk: false, feeKrw: null, feeCoin: null };
+          const netEdgeKrw = transferEval.feeKrw != null ? edgeKrw - transferEval.feeKrw : undefined;
+          const netEdgePct = netEdgeKrw != null ? (netEdgeKrw / notionalKrw) * 100.0 : undefined;
 
           return {
             rank: idx,
             direction,
             coin: row.coin,
+            domesticExchange,
+            overseasExchange,
             premiumPct: premium,
             edgeKrw,
             edgePct,
+            netEdgeKrw,
+            netEdgePct,
+            transferOk: includeTransfer ? transferEval.transferOk : undefined,
             domesticAsk: domesticPrice,
             overseasBid: overseasPrice,
             gapSource,
@@ -1528,37 +1636,211 @@ export async function watchReverseTopN(
             return { row, premium };
           })
           .filter((entry): entry is { row: SnapshotRow; premium: number } => Boolean(entry))
-          .sort((a, b) => a.premium - b.premium);
+          .sort((a, b) => sortPremiumAsc({ premiumPct: a.premium, coin: a.row.coin }, { premiumPct: b.premium, coin: b.row.coin }));
         const g2bCandidates = rows
           .map((row) => {
-            const pricing = selectPricing(row, "g2b");
-            if (!pricing) return null;
-            const premium = premiumPct(pricing.domesticPrice, pricing.overseasPrice, lastRate.usdtKrw);
+            if (!(row.domesticBid && row.domesticBid > 0)) return null;
+            if (!(row.gateioSpotAsk && row.gateioSpotAsk > 0)) return null;
+            if (!(row.overseasBid && row.overseasBid > 0)) return null;
+            const basis = basisPct(row.gateioSpotAsk, row.overseasBid);
+            if (!(basis <= DEFAULT_G2B_BASIS_MAX_PCT)) return null;
+            const premium = premiumPct(row.domesticBid, row.gateioSpotAsk, lastRate.usdtKrw);
             if (!(premium > 0)) return null;
             return { row, premium };
           })
           .filter((entry): entry is { row: SnapshotRow; premium: number } => Boolean(entry))
-          .sort((a, b) => b.premium - a.premium);
+          .sort((a, b) => sortPremiumDesc({ premiumPct: a.premium, coin: a.row.coin }, { premiumPct: b.premium, coin: b.row.coin }));
 
         closestCoins = b2gCandidates.slice(0, Math.min(displayTopK, b2gCandidates.length)).map((entry) => entry.row.coin);
         farCoins = g2bCandidates.slice(0, Math.min(displayFarK, g2bCandidates.length)).map((entry) => entry.row.coin);
 
         const topB2G = b2gCandidates.slice(0, displayTopK);
         const topG2B = g2bCandidates.slice(0, displayFarK);
+        const cycleLegLimit = Math.min(DEFAULT_CYCLE_LEG_LIMIT, Math.max(topN, displayTopK, displayFarK));
+        const includeTransfer = transferEnabled;
 
-        let outIdx = 0;
-        for (const entry of topB2G) outputRows.push(buildRow((outIdx += 1), entry.row, true, "b2g"));
-        for (const entry of topG2B) outputRows.push(buildRow((outIdx += 1), entry.row, true, "g2b"));
+        const cycleOutCandidates = rows
+          .map((row) => {
+            if (!(row.domesticAsk > 0 && row.gateioSpotBid != null && row.gateioSpotBid > 0)) return null;
+            if (!(row.overseasBid > 0)) return null;
+            const basisOut = basisPct(row.gateioSpotBid, row.overseasBid);
+            if (basisOut > DEFAULT_B2G_BASIS_MAX_PCT) return null;
+            const baseQty = notionalKrw / row.domesticAsk;
+            const transferOut = includeTransfer
+              ? transferInfoForRow(
+                  "b2g",
+                  { coin: row.coin, domesticPriceKrw: row.domesticAsk, overseasPriceUsdt: row.gateioSpotBid },
+                  lastRate.usdtKrw,
+                )
+              : undefined;
+            const transferEval = includeTransfer
+              ? evaluateTransfer(transferOut, baseQty)
+              : { transferOk: false, feeKrw: null, feeCoin: null };
+            if (transferEnabled && !transferEval.transferOk) return null;
+            const usdtOut = baseQty * row.gateioSpotBid;
+            return {
+              coin: row.coin,
+              domesticAsk: row.domesticAsk,
+              overseasSpotBid: row.gateioSpotBid,
+              spotVsPerpPct: row.spotVsPerpPct,
+              transfer: transferOut,
+              transferEval,
+              baseQty,
+              usdtOut,
+              impact: row.liquidity,
+            };
+          })
+          .filter(
+            (entry): entry is {
+              coin: string;
+              domesticAsk: number;
+              overseasSpotBid: number;
+              spotVsPerpPct?: number;
+              transfer?: WatchTransfer;
+              transferEval: { transferOk: boolean; feeKrw: number | null; feeCoin: number | null };
+              baseQty: number;
+              usdtOut: number;
+              impact?: SnapshotRow["liquidity"];
+            } => Boolean(entry),
+          )
+          .sort((a, b) => b.usdtOut - a.usdtOut);
 
-        const remainingSlots = Math.max(0, topN - outIdx);
-        if (remainingSlots > 0) {
-          const extras = [
-            ...b2gCandidates.slice(displayTopK).map((entry) => ({ entry, direction: "b2g" as const })),
-            ...g2bCandidates.slice(displayFarK).map((entry) => ({ entry, direction: "g2b" as const })),
-          ];
-          for (const extra of extras) {
-            if (outIdx >= topN) break;
-            outputRows.push(buildRow((outIdx += 1), extra.entry.row, true, extra.direction));
+        const cycleBackCandidates = rows
+          .map((row) => {
+            if (!(row.domesticBid && row.domesticBid > 0)) return null;
+            if (!(row.gateioSpotAsk && row.gateioSpotAsk > 0)) return null;
+            if (!(row.overseasBid && row.overseasBid > 0)) return null;
+            const basisBack = basisPct(row.gateioSpotAsk, row.overseasBid);
+            if (basisBack > DEFAULT_G2B_BASIS_MAX_PCT) return null;
+            const krwPerUsdt = row.domesticBid / row.gateioSpotAsk;
+            const transferBack = includeTransfer
+              ? transferInfoForRow(
+                  "g2b",
+                  { coin: row.coin, domesticPriceKrw: row.domesticBid, overseasPriceUsdt: row.gateioSpotAsk },
+                  lastRate.usdtKrw,
+                )
+              : undefined;
+            return {
+              coin: row.coin,
+              domesticBid: row.domesticBid,
+              overseasSpotAsk: row.gateioSpotAsk,
+              spotVsPerpPct: row.spotVsPerpPct,
+              krwPerUsdt,
+              transfer: transferBack,
+              impact: row.liquidity,
+            };
+          })
+          .filter(
+            (entry): entry is {
+              coin: string;
+              domesticBid: number;
+              overseasSpotAsk: number;
+              spotVsPerpPct?: number;
+              krwPerUsdt: number;
+              transfer?: WatchTransfer;
+              impact?: SnapshotRow["liquidity"];
+            } => Boolean(entry),
+          )
+          .sort((a, b) => b.krwPerUsdt - a.krwPerUsdt);
+
+        if (fullUniverse) {
+          const cycleRows: WatchReverseRow[] = [];
+          const outLegs = cycleOutCandidates.slice(0, cycleLegLimit);
+          const backLegs = cycleBackCandidates.slice(0, cycleLegLimit);
+
+          for (const out of outLegs) {
+            for (const back of backLegs) {
+              const baseQtyBack = out.usdtOut / back.overseasSpotAsk;
+              if (!(baseQtyBack > 0)) continue;
+              const backEval = includeTransfer
+                ? evaluateTransfer(back.transfer, baseQtyBack)
+                : { transferOk: false, feeKrw: null, feeCoin: null };
+              if (transferEnabled && !backEval.transferOk) continue;
+
+              const grossKrw = baseQtyBack * back.domesticBid;
+              const edgeKrw = grossKrw - notionalKrw;
+              const edgePct = (edgeKrw / notionalKrw) * 100.0;
+              const feeOutKrw = includeTransfer ? (out.transferEval.feeKrw ?? 0) : 0;
+              const feeBackKrw = includeTransfer ? (backEval.feeKrw ?? 0) : 0;
+              const netEdgeKrw =
+                includeTransfer && (out.transferEval.feeKrw != null || backEval.feeKrw != null)
+                  ? edgeKrw - feeOutKrw - feeBackKrw
+                  : undefined;
+              const netEdgePct = netEdgeKrw != null ? (netEdgeKrw / notionalKrw) * 100.0 : undefined;
+              const transferOk = includeTransfer ? out.transferEval.transferOk && backEval.transferOk : undefined;
+              const coinLabel = out.coin === back.coin ? out.coin : `${out.coin}→${back.coin}`;
+
+              cycleRows.push({
+                rank: 0,
+              cycle: true,
+              coin: coinLabel,
+              outCoin: out.coin,
+              backCoin: back.coin,
+              domesticExchange,
+              overseasExchange,
+              premiumPct: netEdgePct ?? edgePct,
+              edgeKrw,
+              edgePct,
+              netEdgeKrw,
+                netEdgePct,
+                transferOk,
+                domesticAsk: out.domesticAsk,
+                domesticBid: back.domesticBid,
+                gateioSpotBid: out.overseasSpotBid,
+                gateioSpotAsk: back.overseasSpotAsk,
+                outDomesticAsk: out.domesticAsk,
+                outOverseasBid: out.overseasSpotBid,
+                backOverseasAsk: back.overseasSpotAsk,
+                backDomesticBid: back.domesticBid,
+                outSpotVsPerpPct: out.spotVsPerpPct,
+                backSpotVsPerpPct: back.spotVsPerpPct,
+                impact: {
+                  domestic: out.impact?.domestic?.impactPct,
+                  gateioSpot: out.impact?.gateioSpot?.impactPct,
+                  gateioPerp: out.impact?.gateioPerp?.impactPct,
+                },
+                transferOut: out.transfer,
+                transferBack: back.transfer,
+              });
+            }
+          }
+
+          const filteredCycleRows = cycleRows.filter((row) => {
+            if (!transferEnabled) return true;
+            return row.transferOk && row.netEdgeKrw != null;
+          });
+
+          filteredCycleRows.sort((a, b) => {
+            const aEdge = transferEnabled ? (a.netEdgeKrw ?? -Infinity) : (a.edgeKrw ?? -Infinity);
+            const bEdge = transferEnabled ? (b.netEdgeKrw ?? -Infinity) : (b.edgeKrw ?? -Infinity);
+            const edgeDiff = bEdge - aEdge;
+            if (edgeDiff !== 0) return edgeDiff;
+            const aPct = transferEnabled ? (a.netEdgePct ?? -Infinity) : (a.edgePct ?? -Infinity);
+            const bPct = transferEnabled ? (b.netEdgePct ?? -Infinity) : (b.edgePct ?? -Infinity);
+            const pctDiff = bPct - aPct;
+            if (pctDiff !== 0) return pctDiff;
+            return a.coin.localeCompare(b.coin);
+          });
+
+          filteredCycleRows.forEach((row, idx) => {
+            row.rank = idx + 1;
+          });
+          outputRows.push(...filteredCycleRows);
+        } else {
+          let outIdx = 0;
+          for (const entry of topB2G) outputRows.push(buildRow((outIdx += 1), entry.row, true, "b2g"));
+          for (const entry of topG2B) outputRows.push(buildRow((outIdx += 1), entry.row, true, "g2b"));
+
+          const remainingSlots = Math.max(0, topN - outIdx);
+          if (remainingSlots > 0) {
+            const extras = [
+              ...b2gCandidates.slice(displayTopK).map((entry) => ({ entry, direction: "b2g" as const })),
+              ...g2bCandidates.slice(displayFarK).map((entry) => ({ entry, direction: "g2b" as const })),
+            ];
+            for (const extra of extras) {
+              if (outIdx >= topN) break;
+              outputRows.push(buildRow((outIdx += 1), extra.entry.row, true, extra.direction));
+            }
           }
         }
 
@@ -1619,7 +1901,7 @@ export async function watchReverseTopN(
               `\n[WATCH] ${listLabel} ${watchCoins.length}개, ${intervalSec}초마다 업데이트 (가까운 ${displayTopK} + 큰차이 ${displayFarK})`,
             );
             console.info(
-              `[WATCH] 기준금액=${formatKrw(notionalKrw)} | ticker(best bid/ask) | B→G: 국내 ask / 해외 spot bid(없으면 perp) | G→B: 국내 bid / 해외 spot ask(없으면 perp)`,
+              `[WATCH] 기준금액=${formatKrw(notionalKrw)} | ticker(best bid/ask) | B→G: 국내 ask / 해외 spot bid + basis<=${DEFAULT_B2G_BASIS_MAX_PCT}% | G→B: 국내 bid / 해외 spot ask(없으면 perp)`,
             );
             console.info(`b2g=${closestCoins.join(", ")}`);
             if (farCoins.length) console.info(`g2b=${farCoins.join(", ")}`);
@@ -1644,8 +1926,26 @@ export async function watchReverseTopN(
             const premiumPct = row.premiumPct ?? 0;
             const edgeKrw = row.edgeKrw ?? 0;
             const edgePct = row.edgePct ?? 0;
+            const netEdgeKrw = row.netEdgeKrw;
+            const netEdgePct = row.netEdgePct;
+            const edgeLabel = netEdgeKrw != null && netEdgePct != null ? "net_edge" : "edge";
+            const edgeValueKrw = netEdgeKrw ?? edgeKrw;
+            const edgeValuePct = netEdgePct ?? edgePct;
             const domesticAsk = row.domesticAsk;
             const overseasBid = row.overseasBid;
+            if (row.cycle) {
+              const outCoin = row.outCoin ?? row.coin;
+              const backCoin = row.backCoin ?? row.coin;
+              const outAsk = row.outDomesticAsk ?? row.domesticAsk;
+              const backBid = row.backDomesticBid ?? row.domesticBid;
+              const outSpotBid = row.outOverseasBid ?? row.gateioSpotBid;
+              const backSpotAsk = row.backOverseasAsk ?? row.gateioSpotAsk;
+              console.info(
+                `${String(row.rank).padStart(2, " ")} ) ${row.coin.padEnd(14)} ${premiumPct >= 0 ? "+" : ""}${premiumPct.toFixed(3)}% | ${edgeLabel}=${edgeValueKrw >= 0 ? "+" : ""}${Math.round(edgeValueKrw).toLocaleString()}원 (${edgeValuePct >= 0 ? "+" : ""}${edgeValuePct.toFixed(3)}%) | ${domesticLabel} ${outCoin} ask=${outAsk != null ? Math.round(outAsk).toLocaleString() : "—"} KRW | ${overseasLabel.toUpperCase()} ${outCoin} spot_bid=${formatUsdtPrice(outSpotBid ?? 0)} | ${overseasLabel.toUpperCase()} ${backCoin} spot_ask=${formatUsdtPrice(backSpotAsk ?? 0)} | ${domesticLabel} ${backCoin} bid=${backBid != null ? Math.round(backBid).toLocaleString() : "—"} KRW${row.transferText ?? ""}`,
+              );
+              continue;
+            }
+
             const direction = row.direction === "g2b" ? "g2b" : "b2g";
             const domesticPriceLabel = direction === "g2b" ? `${domesticLabel} bid` : `${domesticLabel} ask`;
             const overseasSideLabel =
@@ -1680,7 +1980,7 @@ export async function watchReverseTopN(
                 : "";
 
             console.info(
-              `${String(row.rank).padStart(2, " ")} ) ${row.coin.padEnd(10)} ${premiumPct >= 0 ? "+" : ""}${premiumPct.toFixed(3)}% | edge=${edgeKrw >= 0 ? "+" : ""}${Math.round(edgeKrw).toLocaleString()}원 (${edgePct >= 0 ? "+" : ""}${edgePct.toFixed(3)}%) | ${domesticPriceLabel}=${Math.round(domesticAsk).toLocaleString()} KRW | ${overseasSideLabel}=${formatUsdtPrice(overseasBid)}${spotInfo}${spotVsPerp}${liq}${row.transferText ?? ""}`,
+              `${String(row.rank).padStart(2, " ")} ) ${row.coin.padEnd(10)} ${premiumPct >= 0 ? "+" : ""}${premiumPct.toFixed(3)}% | ${edgeLabel}=${edgeValueKrw >= 0 ? "+" : ""}${Math.round(edgeValueKrw).toLocaleString()}원 (${edgeValuePct >= 0 ? "+" : ""}${edgeValuePct.toFixed(3)}%) | ${domesticPriceLabel}=${Math.round(domesticAsk).toLocaleString()} KRW | ${overseasSideLabel}=${formatUsdtPrice(overseasBid)}${spotInfo}${spotVsPerp}${liq}${row.transferText ?? ""}`,
             );
           }
         }
@@ -1697,8 +1997,8 @@ export async function watchReverseTopN(
     if (ownsGatePerpWs) wsClients?.gatePerp.close();
     if (ownsGateSpotWs) wsClients?.gateSpot?.close();
     await domestic.close?.();
-    if (ownsGateSpot) await gateSpot.close?.();
-    if (ownsGatePerp) await gatePerp.close?.();
+    if (ownsGateSpot) await gateSpot?.close?.();
+    if (ownsGatePerp) await gatePerp?.close?.();
   }
 }
 
