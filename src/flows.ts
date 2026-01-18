@@ -290,7 +290,9 @@ async function asyncPool<TItem, TResult>(
       const current = nextIndex;
       nextIndex += 1;
       if (current >= items.length) return;
-      results[current] = await worker(items[current], current);
+      const item = items[current];
+      if (item === undefined) return;
+      results[current] = await worker(item, current);
     }
   });
 
@@ -602,14 +604,14 @@ async function snapshotReverseRowsForCoins(params: {
     gateioSpotSellUsdt: number | undefined;
     spotVsPerpPct: number | undefined;
   };
-  const domesticSymbols = coins.map((c) => symbolMaps.domesticSymbols[c]).filter(Boolean);
-  const gatePerpSymbols = coins.map((c) => symbolMaps.gateioPerpSymbols[c]).filter(Boolean);
-  const gateSpotSymbols = gateSpot ? coins.map((c) => symbolMaps.gateioSpotSymbols?.[c]).filter(Boolean) : [];
+  const domesticSymbols = coins.map((c) => symbolMaps.domesticSymbols[c]).filter((s): s is string => Boolean(s));
+  const gatePerpSymbols = coins.map((c) => symbolMaps.gateioPerpSymbols[c]).filter((s): s is string => Boolean(s));
+  const gateSpotSymbols = gateSpot ? coins.map((c) => symbolMaps.gateioSpotSymbols?.[c]).filter((s): s is string => Boolean(s)) : [];
 
   const [bTickerQuotes, pTickerQuotes, sTickerQuotes] = await Promise.all([
     fetchQuotesBySymbolViaTickers(domestic, domesticSymbols),
     fetchQuotesBySymbolViaTickers(gatePerp, gatePerpSymbols),
-    gateSpot && gateSpotSymbols.length ? fetchQuotesBySymbolViaTickers(gateSpot, gateSpotSymbols as string[]) : Promise.resolve({}),
+    gateSpot && gateSpotSymbols.length ? fetchQuotesBySymbolViaTickers(gateSpot, gateSpotSymbols) : Promise.resolve({}),
   ]);
 
   const rowsFromTickers: TickerRow[] = [];
@@ -857,8 +859,8 @@ export async function scanReverseAllOnce(options?: { sort?: "abs" | "premium" | 
 
   console.info(`\n[SCAN] 전체 코인 스냅샷 수집 중... (총 ${candidates.length}개)`);
 
-  const bithumbSymbols = candidates.map((c) => universe.bithumbKrwSymbols[c]).filter(Boolean);
-  const gatePerpSymbols = candidates.map((c) => universe.gateioPerpSymbols[c]).filter(Boolean);
+  const bithumbSymbols = candidates.map((c) => universe.bithumbKrwSymbols[c]).filter((s): s is string => Boolean(s));
+  const gatePerpSymbols = candidates.map((c) => universe.gateioPerpSymbols[c]).filter((s): s is string => Boolean(s));
 
   const [bTickerQuotes, pTickerQuotes] = await Promise.all([
     fetchQuotesBySymbolViaTickers(bithumb as any, bithumbSymbols),
@@ -2171,8 +2173,8 @@ export async function runReverseCycle(
   const candidates = universe.reverseCandidates;
   if (!candidates.length) throw new Error("No overlapping Bithumb(KRW) / GateIO(perp) coins found.");
 
-  const bithumbQuotes = await fetchQuotesByBase(bithumb, Object.fromEntries(candidates.map((c) => [c, universe.bithumbKrwSymbols[c]])));
-  const gateioPerpQuotes = await fetchQuotesByBase(gatePerp, Object.fromEntries(candidates.map((c) => [c, universe.gateioPerpSymbols[c]])));
+  const bithumbQuotes = await fetchQuotesByBase(bithumb, Object.fromEntries(candidates.map((c) => [c, universe.bithumbKrwSymbols[c] ?? ""]).filter(([, v]) => v)));
+  const gateioPerpQuotes = await fetchQuotesByBase(gatePerp, Object.fromEntries(candidates.map((c) => [c, universe.gateioPerpSymbols[c] ?? ""]).filter(([, v]) => v)));
 
   const prefilter = computeNearZeroOpportunities(
     applyFeeToQuotes(bithumbQuotes, BITHUMB_SPOT_TAKER_FEE, BITHUMB_SPOT_TAKER_FEE),
@@ -2187,6 +2189,7 @@ export async function runReverseCycle(
   const baseQtyByCoin: Record<string, number> = {};
   for (const coin of prefilterCoins) {
     const symbol = universe.gateioPerpSymbols[coin];
+    if (!symbol) continue;
     const result = await quoteAndSizeFromNotional(gatePerp, symbol, chunkUsdt, "sell", orderbookDepth);
     if (!result) continue;
     perpRawQuotes[coin] = result.quote;
@@ -2195,13 +2198,13 @@ export async function runReverseCycle(
 
   const bithumbRawQuotes = await fetchVwapQuotesByBase(
     bithumb,
-    Object.fromEntries(Object.keys(baseQtyByCoin).map((c) => [c, universe.bithumbKrwSymbols[c]])),
+    Object.fromEntries(Object.keys(baseQtyByCoin).map((c) => [c, universe.bithumbKrwSymbols[c] ?? ""]).filter(([, v]) => v)),
     baseQtyByCoin,
     orderbookDepth,
   );
   const gateioSpotRawQuotes = await fetchVwapQuotesByBase(
     gateSpot,
-    Object.fromEntries(Object.keys(baseQtyByCoin).filter((c) => universe.gateioSpotSymbols[c]).map((c) => [c, universe.gateioSpotSymbols[c]])),
+    Object.fromEntries(Object.keys(baseQtyByCoin).filter((c) => universe.gateioSpotSymbols[c]).map((c) => [c, universe.gateioSpotSymbols[c] ?? ""]).filter(([, v]) => v)),
     baseQtyByCoin,
     orderbookDepth,
   );
@@ -2234,6 +2237,7 @@ export async function runReverseCycle(
   const entryOpps = topCoins.map((coin) => {
     const b = bithumbEff[coin];
     const p = perpEff[coin];
+    if (!b || !p) return null;
     return {
       coin,
       direction: "reverse" as const,
@@ -2242,7 +2246,7 @@ export async function runReverseCycle(
       overseasPrice: p.bid,
       usdtKrw,
     };
-  });
+  }).filter((x): x is NonNullable<typeof x> => x !== null);
 
   console.info(
     `\n[1] 진입 후보 제한: TOP ${entryTopN > 0 ? entryTopN : "ALL"} (0% 근접/역프 우선)`,
@@ -2268,6 +2272,7 @@ export async function runReverseCycle(
   const bithumbSymbol = universe.bithumbKrwSymbols[coin];
   const gatePerpSymbol = universe.gateioPerpSymbols[coin];
   const gateSpotSymbol = universe.gateioSpotSymbols[coin];
+  if (!bithumbSymbol || !gatePerpSymbol) throw new Error(`Missing symbol for ${coin}`);
 
   for (let idx = 1; idx <= maxChunks; idx++) {
     console.info(`\n[4] 진입 청크 ${idx}/${maxChunks} (${chunkUsdt} USDT)`);
@@ -2304,7 +2309,7 @@ export async function runReverseCycle(
   console.info(`\n[6] 청산 수량: ${qty.toFixed(8)} ${coin} (short=${shortQty.toFixed(8)}, gate_spot_balance=${gateBal.toFixed(8)})`);
 
   const perpRaw = await fetchVwapQuote(gatePerp, gatePerpSymbol, qty, orderbookDepth);
-  const spotRaw = await fetchVwapQuote(gateSpot, gateSpotSymbol, qty, orderbookDepth);
+  const spotRaw = gateSpotSymbol ? await fetchVwapQuote(gateSpot, gateSpotSymbol, qty, orderbookDepth) : null;
   if (!perpRaw || !spotRaw) throw new Error("Failed to fetch GateIO VWAP quotes for unwind.");
 
   const spotFee = feeAdjustedQuote(spotRaw, GATEIO_SPOT_TAKER_FEE, GATEIO_SPOT_TAKER_FEE);
@@ -2314,7 +2319,7 @@ export async function runReverseCycle(
   if (gap > basisThresholdPct) throw new Error("GateIO basis too wide to unwind safely.");
 
   const covered = await gateioPerpCover(gatePerp, gatePerpSymbol, qty, coin);
-  await gateioSpotSell(gateSpot, gateSpotSymbol, covered, coin);
+  if (gateSpotSymbol) await gateioSpotSell(gateSpot, gateSpotSymbol, covered, coin);
 
   const krwBal = await bithumbSpotBalance(bithumb, "KRW");
   console.info(`\n✅ 완료. Bithumb KRW balance: ₩${Math.round(krwBal).toLocaleString()}`);
@@ -2347,8 +2352,8 @@ export async function runKimchiCycle(
   const candidates = universe.kimchiCandidates;
   if (!candidates.length) throw new Error("No overlapping Bithumb(KRW) / GateIO(spot+perp) coins found.");
 
-  const bithumbQuotes = await fetchQuotesByBase(bithumb, Object.fromEntries(candidates.map((c) => [c, universe.bithumbKrwSymbols[c]])));
-  const gateioPerpQuotes = await fetchQuotesByBase(gatePerp, Object.fromEntries(candidates.map((c) => [c, universe.gateioPerpSymbols[c]])));
+  const bithumbQuotes = await fetchQuotesByBase(bithumb, Object.fromEntries(candidates.map((c) => [c, universe.bithumbKrwSymbols[c] ?? ""]).filter(([, v]) => v)));
+  const gateioPerpQuotes = await fetchQuotesByBase(gatePerp, Object.fromEntries(candidates.map((c) => [c, universe.gateioPerpSymbols[c] ?? ""]).filter(([, v]) => v)));
 
   const prefilter = computeKimchiOpportunities(
     applyFeeToQuotes(bithumbQuotes, BITHUMB_SPOT_TAKER_FEE, BITHUMB_SPOT_TAKER_FEE),
@@ -2363,6 +2368,7 @@ export async function runKimchiCycle(
   const baseQtyByCoin: Record<string, number> = {};
   for (const coin of prefilterCoins) {
     const symbol = universe.gateioPerpSymbols[coin];
+    if (!symbol) continue;
     const result = await quoteAndSizeFromNotional(gatePerp, symbol, chunkUsdt, "sell", orderbookDepth);
     if (!result) continue;
     perpRawQuotes[coin] = result.quote;
@@ -2371,13 +2377,13 @@ export async function runKimchiCycle(
 
   const bithumbRawQuotes = await fetchVwapQuotesByBase(
     bithumb,
-    Object.fromEntries(Object.keys(baseQtyByCoin).map((c) => [c, universe.bithumbKrwSymbols[c]])),
+    Object.fromEntries(Object.keys(baseQtyByCoin).map((c) => [c, universe.bithumbKrwSymbols[c] ?? ""]).filter(([, v]) => v)),
     baseQtyByCoin,
     orderbookDepth,
   );
   const gateioSpotRawQuotes = await fetchVwapQuotesByBase(
     gateSpot,
-    Object.fromEntries(Object.keys(baseQtyByCoin).filter((c) => universe.gateioSpotSymbols[c]).map((c) => [c, universe.gateioSpotSymbols[c]])),
+    Object.fromEntries(Object.keys(baseQtyByCoin).filter((c) => universe.gateioSpotSymbols[c]).map((c) => [c, universe.gateioSpotSymbols[c] ?? ""]).filter(([, v]) => v)),
     baseQtyByCoin,
     orderbookDepth,
   );
@@ -2405,6 +2411,7 @@ export async function runKimchiCycle(
   const bithumbSymbol = universe.bithumbKrwSymbols[coin];
   const gatePerpSymbol = universe.gateioPerpSymbols[coin];
   const gateSpotSymbol = universe.gateioSpotSymbols[coin];
+  if (!bithumbSymbol || !gatePerpSymbol || !gateSpotSymbol) throw new Error(`Missing symbol for ${coin}`);
 
   for (let idx = 1; idx <= maxChunks; idx++) {
     console.info(`\n[4] 진입 청크 ${idx}/${maxChunks} (${chunkUsdt} USDT)`);

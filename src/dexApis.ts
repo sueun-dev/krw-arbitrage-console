@@ -342,7 +342,9 @@ export async function fetchNadoMarkets(): Promise<DexApiResult> {
         if (!tickerId.includes("-PERP")) continue;
 
         // Extract base from ticker_id (e.g., "BTC-PERP_USDT0" -> "BTC")
-        const base = tickerId.split("-PERP")[0].toUpperCase();
+        const basePart = tickerId.split("-PERP")[0];
+        if (!basePart) continue;
+        const base = basePart.toUpperCase();
         if (!base) continue;
 
         const lastPrice = parseFloat(ticker?.last_price || "0");

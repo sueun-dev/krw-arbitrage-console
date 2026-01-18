@@ -367,7 +367,7 @@ export async function paradexPerpSymbols(
 
 // Generic DEX perp symbols fetcher using CCXT
 export async function getDexPerpSymbols(
-  dex: string,
+  _dex: string,
   perp: Exchange,
 ): Promise<Record<string, string>> {
   await perp.loadMarkets();

@@ -46,7 +46,7 @@ const tabPanels = $$(".tab-panel");
 const cycleFixBtn = $("cycle-fix-btn");
 
 // State
-let currentTab = "dashboard";
+let _currentTab = "dashboard"; // Track current tab state
 let cycleSource = null;
 let pairSource = null;
 let lastCyclePayload = null;
@@ -90,7 +90,7 @@ const escapeHtml = (v) =>
 
 // Tab Navigation
 function switchTab(tab) {
-  currentTab = tab;
+  _currentTab = tab;
   navItems.forEach((item) => item.classList.toggle("active", item.dataset.tab === tab));
   tabPanels.forEach((panel) => panel.classList.toggle("active", panel.id === `panel-${tab}`));
   const info = PAGE_INFO[tab] || PAGE_INFO.dashboard;

@@ -318,7 +318,7 @@ async function buildSharedOverseasResources(overseas: OverseasExchange): Promise
   for (const coin of coins) {
     const perpSymbol = gateioSymbols.perp[coin];
     const perpMarket =
-      overseas === "lighter"
+      overseas === "lighter" || !perpSymbol
         ? null
         : ((gatePerp as any)?.market?.(perpSymbol) ?? (gatePerp as any)?.markets?.[perpSymbol]);
     const perpWsSymbol =

@@ -15,7 +15,7 @@ const statusTextEl = $("status-text");
 
 // Badge counts
 const contangoCountEl = $("contango-count");
-const fundingCountEl = $("funding-count");
+const _fundingCountEl = $("funding-count"); // Reserved for future use
 
 // Dashboard panels
 const dashboardContangoEl = $("dashboard-contango");

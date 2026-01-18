@@ -76,9 +76,10 @@ export type FillAnalysis = {
 export function analyzeBuyFillFromQuote(asks: unknown, quoteAmount: number): FillAnalysis | null {
   if (quoteAmount <= 0) return null;
   const levels = normalizeAsks(asks);
-  if (!levels.length) return null;
+  const firstLevel = levels[0];
+  if (!firstLevel) return null;
 
-  const bestPrice = levels[0][0];
+  const bestPrice = firstLevel[0];
   let remaining = quoteAmount;
   let baseQty = 0.0;
   let cost = 0.0;
@@ -113,9 +114,10 @@ export function analyzeBuyFillFromQuote(asks: unknown, quoteAmount: number): Fil
 export function analyzeSellFillFromBase(bids: unknown, baseQty: number): FillAnalysis | null {
   if (baseQty <= 0) return null;
   const levels = normalizeBids(bids);
-  if (!levels.length) return null;
+  const firstLevel = levels[0];
+  if (!firstLevel) return null;
 
-  const bestPrice = levels[0][0];
+  const bestPrice = firstLevel[0];
   let remaining = baseQty;
   let proceeds = 0.0;
   let worstPrice = bestPrice;
