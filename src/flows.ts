@@ -40,7 +40,7 @@ import { MarketQuote } from "./models";
 import { analyzeBuyFillFromQuote, analyzeSellFillFromBase } from "./orderbook";
 import { gateioPerpShortQty } from "./positions";
 import { usdtKrwRateContext, usdtKrwRateSource } from "./rates";
-import { computeKimchiOpportunities, computeReverseOpportunities } from "./scanner";
+import { computeKimchiOpportunities, computeNearZeroOpportunities } from "./scanner";
 import { selectTransferableCandidateCoin } from "./selection";
 import {
   bybitSpotAndPerpSymbols,
@@ -53,7 +53,13 @@ import {
   upbitKrwSymbolsRest,
 } from "./symbolUniverse";
 import { buildTransferEtaEntries } from "./transferEta";
-import { bithumbInoutStatuses, gateioCurrencyStatuses } from "./transfers";
+import {
+  bithumbInoutStatuses,
+  bybitCurrencyStatuses,
+  gateioCurrencyStatuses,
+  okxCurrencyStatuses,
+  upbitInoutStatuses,
+} from "./transfers";
 import { bithumbMarketBuyBase, bithumbMarketSellBase, gateioPerpCover, gateioPerpShort, gateioSpotBuy, gateioSpotSell } from "./trading";
 import {
   BithumbOrderbookWs,
@@ -169,6 +175,7 @@ export type WatchTransferChain = {
 export type WatchTransfer = {
   direction: "b2g" | "g2b";
   chains: WatchTransferChain[];
+  closedReason?: string; // 닫힌 이유: "빗썸 출금 중단", "게이트 입금 중단", "공통 체인 없음" 등
 };
 
 export type WatchReverseRow = {
@@ -187,6 +194,10 @@ export type WatchReverseRow = {
   netEdgeKrw?: number;
   netEdgePct?: number;
   transferOk?: boolean;
+  outTransferOk?: boolean;
+  backTransferOk?: boolean;
+  outTransferClosedReason?: string;
+  backTransferClosedReason?: string;
   domesticAsk?: number;
   domesticBid?: number;
   overseasBid?: number;
@@ -647,11 +658,22 @@ async function snapshotReverseRowsForCoins(params: {
     });
   }
 
-  if (rowsFromTickers.length >= Math.max(1, Math.floor(coins.length * 0.8))) return rowsFromTickers;
+  // If we got >= 80% from tickers, only fetch the missing coins (not all)
+  const tickerCoinSet = new Set(rowsFromTickers.map((r) => r.coin));
+  const missingFromTickers = coins.filter((c) => !tickerCoinSet.has(c));
+
+  if (rowsFromTickers.length > 0 && missingFromTickers.length === 0) {
+    return rowsFromTickers; // All coins fetched via tickers
+  }
+
+  // If we have most coins from tickers, only fetch missing ones
+  const coinsToFetch = rowsFromTickers.length >= Math.max(1, Math.floor(coins.length * 0.5))
+    ? missingFromTickers  // Fetch only missing coins
+    : coins;              // Fetch all coins via REST
 
   let done = 0;
   const rows = (
-    await asyncPool(concurrency, coins, async (coin) => {
+    await asyncPool(concurrency, coinsToFetch, async (coin) => {
       const domesticSymbol = symbolMaps.domesticSymbols[coin];
       const gateSpotSymbol = gateSpot ? symbolMaps.gateioSpotSymbols?.[coin] : undefined;
       const gatePerpSymbol = symbolMaps.gateioPerpSymbols[coin];
@@ -703,7 +725,8 @@ async function snapshotReverseRowsForCoins(params: {
     })
   ).filter((x): x is TickerRow => Boolean(x));
 
-  return rows;
+  // Merge ticker results with individual REST results
+  return [...rowsFromTickers, ...rows];
 }
 
 function showTop(opps: Array<{ coin: string; premiumPct: number; domesticPrice: number; overseasPrice: number; usdtKrw: number }>, limit = 15) {
@@ -1324,21 +1347,43 @@ export async function watchReverseTopN(
       }
     }
 
-    const transferEnabled = domesticExchange === "bithumb" && overseasExchange === "gateio";
+    // Transfer status is now enabled for all exchange combinations
+    const transferEnabled = true;
     if (!silent) {
-      const transferLabel = transferEnabled
-        ? `\n[WATCH] 전송 네트워크/수수료 조회 중...`
-        : `\n[WATCH] 전송 네트워크/수수료: ${domesticLabel}/${overseasLabel} 미지원`;
-      console.info(transferLabel);
+      console.info(`\n[WATCH] 전송 네트워크/수수료 조회 중... (${domesticLabel}/${overseasLabel})`);
     }
     emitStatus({
       phase: "transfer",
-      message: transferEnabled ? "Fetching transfer networks/fees..." : "Transfer info disabled",
+      message: "Fetching transfer networks/fees...",
     });
-    const [bTransfer, gTransfer] = transferEnabled
-      ? await Promise.all([bithumbInoutStatuses(watchCoins), gateioCurrencyStatuses(gateSpot as any, watchCoins)])
-      : [{}, {}];
-    emitStatus({ phase: "transfer", message: transferEnabled ? "Transfer info loaded" : "Transfer info skipped" });
+
+    // Fetch domestic exchange transfer status
+    const fetchDomesticTransfer = async (): Promise<Record<string, import("./models").TransferStatus>> => {
+      if (domesticExchange === "upbit") {
+        return upbitInoutStatuses(watchCoins);
+      }
+      return bithumbInoutStatuses(watchCoins);
+    };
+
+    // Fetch overseas exchange transfer status
+    const fetchOverseasTransfer = async (): Promise<Record<string, import("./models").TransferStatus>> => {
+      if (overseasExchange === "bybit") {
+        return bybitCurrencyStatuses(gateSpot as any, watchCoins);
+      }
+      if (overseasExchange === "okx") {
+        return okxCurrencyStatuses(gateSpot as any, watchCoins);
+      }
+      if (overseasExchange === "gateio") {
+        return gateioCurrencyStatuses(gateSpot as any, watchCoins);
+      }
+      // For hyperliquid/lighter, return empty (no transfer status available)
+      return {};
+    };
+
+    let [bTransfer, gTransfer] = await Promise.all([fetchDomesticTransfer(), fetchOverseasTransfer()]);
+    let lastTransferRefreshMs = Date.now();
+    const TRANSFER_REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5분마다 갱신
+    emitStatus({ phase: "transfer", message: "Transfer info loaded" });
 
     type SnapshotRow = {
       coin: string;
@@ -1423,14 +1468,39 @@ export async function watchReverseTopN(
       const mode = direction;
       const sender = mode === "b2g" ? b : g;
       const receiver = mode === "b2g" ? g : b;
+      const senderExchange = mode === "b2g" ? domesticExchange : overseasExchange;
+      const receiverExchange = mode === "b2g" ? overseasExchange : domesticExchange;
 
-      const senderChains = (sender.chainInfo ?? []).filter((c: any) => c?.withdrawOk === true).map((c: any) => c.name);
-      const receiverChains = (receiver.chainInfo ?? []).filter((c: any) => c?.depositOk === true).map((c: any) => c.name);
-      const pairs = commonChainPairs(senderChains, receiverChains);
-      if (!pairs.length) return { direction: mode, chains: [] };
+      // 거래소별 출금/입금 가능 체인 필터링
+      const senderWithdrawChains = (sender.chainInfo ?? []).filter((c: any) => c?.withdrawOk === true).map((c: any) => c.name);
+      const receiverDepositChains = (receiver.chainInfo ?? []).filter((c: any) => c?.depositOk === true).map((c: any) => c.name);
+
+      // 닫힌 이유 판단
+      let closedReason: string | undefined;
+      const senderName = senderExchange === "bithumb" ? "빗썸" : senderExchange === "upbit" ? "업비트" : senderExchange === "gateio" ? "게이트" : senderExchange === "bybit" ? "바이빗" : senderExchange === "okx" ? "OKX" : senderExchange;
+      const receiverName = receiverExchange === "bithumb" ? "빗썸" : receiverExchange === "upbit" ? "업비트" : receiverExchange === "gateio" ? "게이트" : receiverExchange === "bybit" ? "바이빗" : receiverExchange === "okx" ? "OKX" : receiverExchange;
+
+      if (senderWithdrawChains.length === 0 && receiverDepositChains.length === 0) {
+        closedReason = `${senderName} 출금·${receiverName} 입금 중단`;
+      } else if (senderWithdrawChains.length === 0) {
+        closedReason = `${senderName} 출금 중단`;
+      } else if (receiverDepositChains.length === 0) {
+        closedReason = `${receiverName} 입금 중단`;
+      } else {
+        // 양쪽 다 열려있지만 공통 체인이 없는지 확인
+        const pairs = commonChainPairs(senderWithdrawChains, receiverDepositChains);
+        if (pairs.length === 0) {
+          closedReason = `공통 체인 없음 (${senderName}: ${senderWithdrawChains.slice(0, 2).join(",")} / ${receiverName}: ${receiverDepositChains.slice(0, 2).join(",")})`;
+        }
+      }
+
+      const pairs = commonChainPairs(senderWithdrawChains, receiverDepositChains);
+      if (!pairs.length) return { direction: mode, chains: [], closedReason };
 
       const feeToKrw = (feeCoin: number): number | null => {
-        if (!(feeCoin > 0)) return null;
+        // feeCoin이 0이면 무료 출금이므로 0 리턴 (유효한 값)
+        if (!Number.isFinite(feeCoin) || feeCoin < 0) return null;
+        if (feeCoin === 0) return 0;
         if (mode === "b2g") {
           if (!(row.overseasPriceUsdt > 0 && usdtKrw > 0)) return null;
           return feeCoin * row.overseasPriceUsdt * usdtKrw;
@@ -1463,17 +1533,37 @@ export async function watchReverseTopN(
       transfer: WatchTransfer | undefined,
       baseQty: number | null,
     ): { transferOk: boolean; feeKrw: number | null; feeCoin: number | null } => {
+      // chains가 있으면 송금 가능한 경로가 존재함
       if (!transfer || !transfer.chains.length) return { transferOk: false, feeKrw: null, feeCoin: null };
-      if (!(baseQty && Number.isFinite(baseQty) && baseQty > 0)) return { transferOk: false, feeKrw: null, feeCoin: null };
 
+      // baseQty 체크를 더 관대하게 - 없거나 유효하지 않아도 경로 존재하면 transferOk = true
+      const hasValidQty = baseQty != null && Number.isFinite(baseQty) && baseQty > 0;
+
+      // 먼저 유효한 fee 정보가 있는 체인 중 최적 체인 찾기
       let bestChain: WatchTransferChain | null = null;
       for (const chain of transfer.chains) {
+        // fee가 null이면 건너뜀 (나중에 처리)
         if (chain.feeKrw == null || !Number.isFinite(chain.feeKrw)) continue;
-        if (chain.minCoin != null && baseQty < chain.minCoin) continue;
+        // minCoin 체크는 baseQty가 유효할 때만
+        if (hasValidQty && chain.minCoin != null && baseQty < chain.minCoin) continue;
         if (!bestChain || chain.feeKrw < (bestChain.feeKrw ?? Infinity)) bestChain = chain;
       }
-      if (!bestChain || bestChain.feeKrw == null) return { transferOk: false, feeKrw: null, feeCoin: null };
-      return { transferOk: true, feeKrw: bestChain.feeKrw, feeCoin: bestChain.feeCoin ?? null };
+
+      // 유효한 fee 있는 체인이 있으면 그걸 사용
+      if (bestChain && bestChain.feeKrw != null) {
+        return { transferOk: true, feeKrw: bestChain.feeKrw, feeCoin: bestChain.feeCoin ?? null };
+      }
+
+      // fee 정보가 없는 체인이라도 존재하면 transferOk = true (fee는 unknown)
+      // minCoin 체크를 통과하는 체인이 있는지 확인
+      for (const chain of transfer.chains) {
+        if (hasValidQty && chain.minCoin != null && baseQty < chain.minCoin) continue;
+        // 이 체인은 사용 가능
+        return { transferOk: true, feeKrw: null, feeCoin: null };
+      }
+
+      // 모든 체인이 minCoin 미달이면 false
+      return { transferOk: false, feeKrw: null, feeCoin: null };
     };
 
     let printedHeader = false;
@@ -1484,6 +1574,22 @@ export async function watchReverseTopN(
     const fallbackEveryTicks = Math.max(1, Math.round(5 / intervalSec));
     while (!signal?.aborted) {
       tick += 1;
+
+      // 5분마다 transfer status 갱신
+      const nowMs = Date.now();
+      if (nowMs - lastTransferRefreshMs >= TRANSFER_REFRESH_INTERVAL_MS) {
+        try {
+          const [newBTransfer, newGTransfer] = await Promise.all([fetchDomesticTransfer(), fetchOverseasTransfer()]);
+          bTransfer = newBTransfer;
+          gTransfer = newGTransfer;
+          lastTransferRefreshMs = nowMs;
+          if (!silent) console.info(`[WATCH] Transfer status refreshed`);
+          emitStatus({ phase: "transfer", message: "Transfer status refreshed" });
+        } catch (err) {
+          console.warn(`[WATCH] Transfer refresh failed: ${String(err)}`);
+        }
+      }
+
       try {
         const rate = await usdtKrwRateContext(rateSource);
         lastRate = rate;
@@ -1495,6 +1601,7 @@ export async function watchReverseTopN(
         let freshRows: SnapshotRow[] = [];
         if (wsClients) {
           freshRows = buildRowsFromWsQuotes(lastRate.usdtKrw);
+          if (tick % 10 === 0) console.info(`[WATCH] tick=${tick}, wsRows=${freshRows.length}, wsOnly=${wsOnly}, lastFallback=${lastFallbackTick}`);
           if (!freshRows.length && !wsOnly) {
             freshRows = await snapshotReverseRowsForCoins({
               domestic,
@@ -1511,8 +1618,18 @@ export async function watchReverseTopN(
               notionalKrw,
             });
           } else if (!wsOnly && tick - lastFallbackTick >= fallbackEveryTicks) {
-            const freshSet = new Set(freshRows.map((row) => row.coin));
-            const missingCoins = watchCoins.filter((coin) => !freshSet.has(coin));
+            // Consider coins "complete" if they have spot bid data in freshRows OR in lastByCoin (from previous REST)
+            const completeSet = new Set<string>();
+            for (const row of freshRows) {
+              if (row.gateioSpotBid != null && row.gateioSpotBid > 0) completeSet.add(row.coin);
+            }
+            // Also check lastByCoin for previously fetched complete data
+            for (const coin of watchCoins) {
+              const cached = lastByCoin[coin];
+              if (cached?.gateioSpotBid != null && cached.gateioSpotBid > 0) completeSet.add(coin);
+            }
+            const missingCoins = watchCoins.filter((coin) => !completeSet.has(coin));
+            console.info(`[WATCH] REST fallback: tick=${tick}, wsRows=${freshRows.length}, complete=${completeSet.size}, missing=${missingCoins.length}`);
             if (missingCoins.length) {
               const restRows = await snapshotReverseRowsForCoins({
                 domestic,
@@ -1528,6 +1645,7 @@ export async function watchReverseTopN(
                 pricingMode: "ticker",
                 notionalKrw,
               });
+              console.info(`[WATCH] REST fetched: ${restRows.length} rows for ${missingCoins.length} coins`);
               freshRows = [...freshRows, ...restRows];
               lastFallbackTick = tick;
             }
@@ -1552,7 +1670,19 @@ export async function watchReverseTopN(
             emitStatus({ phase: "error", message: "WebSocket-only mode requires active WS feeds." });
           }
         }
-        for (const row of freshRows) lastByCoin[row.coin] = row;
+        // Only update lastByCoin if:
+        // 1. New row has complete spot data, OR
+        // 2. No existing data for this coin
+        // This prevents WS rows without spot data from overwriting complete REST data
+        for (const row of freshRows) {
+          const hasCompleteData = row.gateioSpotBid != null && row.gateioSpotBid > 0;
+          const existingRow = lastByCoin[row.coin];
+          const existingHasCompleteData = existingRow?.gateioSpotBid != null && existingRow.gateioSpotBid > 0;
+          // Update if new data is complete, or if existing data is also incomplete (use fresher prices)
+          if (hasCompleteData || !existingHasCompleteData) {
+            lastByCoin[row.coin] = row;
+          }
+        }
 
         const rows = watchCoins
           .map((coin) => lastByCoin[coin] ?? null)
@@ -1568,7 +1698,17 @@ export async function watchReverseTopN(
           direction: "b2g" | "g2b",
         ): WatchReverseRow => {
           if (!row) return { rank: idx, coin: "N/A", missing: true };
-          const pricing = selectPricing(row, direction);
+          let pricing = selectPricing(row, direction);
+          // If selectPricing fails (e.g., high basis), try to compute data anyway for display
+          if (!pricing && direction === "b2g") {
+            const hasSpotBid = row.gateioSpotBid != null && row.gateioSpotBid > 0;
+            const hasPerpBid = row.overseasBid > 0;
+            const hasDomesticAsk = row.domesticAsk > 0;
+            // If we have all required data but selectPricing failed (likely high basis), still show data
+            if (hasSpotBid && hasPerpBid && hasDomesticAsk) {
+              pricing = { domesticPrice: row.domesticAsk, overseasPrice: row.gateioSpotBid as number, gapSource: "spot", useUnwind: false };
+            }
+          }
           if (!pricing) return { rank: idx, coin: row.coin, missing: true };
 
           const { domesticPrice, overseasPrice, gapSource, useUnwind } = pricing;
@@ -1598,6 +1738,7 @@ export async function watchReverseTopN(
           const netEdgeKrw = transferEval.feeKrw != null ? edgeKrw - transferEval.feeKrw : undefined;
           const netEdgePct = netEdgeKrw != null ? (netEdgeKrw / notionalKrw) * 100.0 : undefined;
 
+          const transferClosedReason = includeTransfer && !transferEval.transferOk ? transfer?.closedReason : undefined;
           return {
             rank: idx,
             direction,
@@ -1610,6 +1751,7 @@ export async function watchReverseTopN(
             netEdgeKrw,
             netEdgePct,
             transferOk: includeTransfer ? transferEval.transferOk : undefined,
+            outTransferClosedReason: transferClosedReason, // B2G/G2B는 단일 경로이므로 outTransferClosedReason 사용
             domesticAsk: domesticPrice,
             overseasBid: overseasPrice,
             gapSource,
@@ -1676,7 +1818,7 @@ export async function watchReverseTopN(
             const transferEval = includeTransfer
               ? evaluateTransfer(transferOut, baseQty)
               : { transferOk: false, feeKrw: null, feeCoin: null };
-            if (transferEnabled && !transferEval.transferOk) return null;
+            // 필터링 제거: transfer 닫혀있어도 빨간색으로 표시하며 보여줌
             const usdtOut = baseQty * row.gateioSpotBid;
             return {
               coin: row.coin,
@@ -1690,19 +1832,7 @@ export async function watchReverseTopN(
               impact: row.liquidity,
             };
           })
-          .filter(
-            (entry): entry is {
-              coin: string;
-              domesticAsk: number;
-              overseasSpotBid: number;
-              spotVsPerpPct?: number;
-              transfer?: WatchTransfer;
-              transferEval: { transferOk: boolean; feeKrw: number | null; feeCoin: number | null };
-              baseQty: number;
-              usdtOut: number;
-              impact?: SnapshotRow["liquidity"];
-            } => Boolean(entry),
-          )
+          .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
           .sort((a, b) => b.usdtOut - a.usdtOut);
 
         const cycleBackCandidates = rows
@@ -1730,17 +1860,7 @@ export async function watchReverseTopN(
               impact: row.liquidity,
             };
           })
-          .filter(
-            (entry): entry is {
-              coin: string;
-              domesticBid: number;
-              overseasSpotAsk: number;
-              spotVsPerpPct?: number;
-              krwPerUsdt: number;
-              transfer?: WatchTransfer;
-              impact?: SnapshotRow["liquidity"];
-            } => Boolean(entry),
-          )
+          .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
           .sort((a, b) => b.krwPerUsdt - a.krwPerUsdt);
 
         if (fullUniverse) {
@@ -1755,7 +1875,7 @@ export async function watchReverseTopN(
               const backEval = includeTransfer
                 ? evaluateTransfer(back.transfer, baseQtyBack)
                 : { transferOk: false, feeKrw: null, feeCoin: null };
-              if (transferEnabled && !backEval.transferOk) continue;
+              // 필터링 제거: transfer 닫혀있어도 빨간색으로 표시하며 보여줌
 
               const grossKrw = baseQtyBack * back.domesticBid;
               const edgeKrw = grossKrw - notionalKrw;
@@ -1767,7 +1887,11 @@ export async function watchReverseTopN(
                   ? edgeKrw - feeOutKrw - feeBackKrw
                   : undefined;
               const netEdgePct = netEdgeKrw != null ? (netEdgeKrw / notionalKrw) * 100.0 : undefined;
-              const transferOk = includeTransfer ? out.transferEval.transferOk && backEval.transferOk : undefined;
+              const outTransferOk = includeTransfer ? out.transferEval.transferOk : undefined;
+              const backTransferOk = includeTransfer ? backEval.transferOk : undefined;
+              const transferOk = includeTransfer ? outTransferOk && backTransferOk : undefined;
+              const outTransferClosedReason = includeTransfer && !outTransferOk ? out.transfer?.closedReason : undefined;
+              const backTransferClosedReason = includeTransfer && !backTransferOk ? back.transfer?.closedReason : undefined;
               const coinLabel = out.coin === back.coin ? out.coin : `${out.coin}→${back.coin}`;
 
               cycleRows.push({
@@ -1784,6 +1908,10 @@ export async function watchReverseTopN(
               netEdgeKrw,
                 netEdgePct,
                 transferOk,
+                outTransferOk,
+                backTransferOk,
+                outTransferClosedReason,
+                backTransferClosedReason,
                 domesticAsk: out.domesticAsk,
                 domesticBid: back.domesticBid,
                 gateioSpotBid: out.overseasSpotBid,
@@ -1805,10 +1933,8 @@ export async function watchReverseTopN(
             }
           }
 
-          const filteredCycleRows = cycleRows.filter((row) => {
-            if (!transferEnabled) return true;
-            return row.transferOk && row.netEdgeKrw != null;
-          });
+          // 필터링 제거: transfer 닫혀있어도 빨간색으로 표시하며 보여줌
+          const filteredCycleRows = cycleRows;
 
           filteredCycleRows.sort((a, b) => {
             const aEdge = transferEnabled ? (a.netEdgeKrw ?? -Infinity) : (a.edgeKrw ?? -Infinity);
@@ -1826,6 +1952,15 @@ export async function watchReverseTopN(
             row.rank = idx + 1;
           });
           outputRows.push(...filteredCycleRows);
+
+          // Also add individual B2G/G2B routes for full universe mode
+          let individualIdx = filteredCycleRows.length;
+          for (const entry of b2gCandidates.slice(0, displayTopK)) {
+            outputRows.push(buildRow((individualIdx += 1), entry.row, true, "b2g"));
+          }
+          for (const entry of g2bCandidates.slice(0, displayFarK)) {
+            outputRows.push(buildRow((individualIdx += 1), entry.row, true, "g2b"));
+          }
         } else {
           let outIdx = 0;
           for (const entry of topB2G) outputRows.push(buildRow((outIdx += 1), entry.row, true, "b2g"));
@@ -2002,9 +2137,15 @@ export async function watchReverseTopN(
   }
 }
 
+/**
+ * B2G 사이클: 빗썸 → 해외 자금 이동
+ * - 김프 0%에 가까운 코인 선택 (손실 최소화)
+ * - 빗썸 현물 매수 + GateIO 선물 숏 (헷지)
+ * - 코인 전송 후 현물 매도 + 숏 청산
+ */
 export async function runReverseCycle(
   chunkUsdt: number,
-  reverseThresholdPct: number,
+  nearZeroMaxAbsPct: number,
   basisThresholdPct: number,
   maxChunks: number,
   confirmLive: ConfirmFunc,
@@ -2033,14 +2174,14 @@ export async function runReverseCycle(
   const bithumbQuotes = await fetchQuotesByBase(bithumb, Object.fromEntries(candidates.map((c) => [c, universe.bithumbKrwSymbols[c]])));
   const gateioPerpQuotes = await fetchQuotesByBase(gatePerp, Object.fromEntries(candidates.map((c) => [c, universe.gateioPerpSymbols[c]])));
 
-  const prefilter = computeReverseOpportunities(
+  const prefilter = computeNearZeroOpportunities(
     applyFeeToQuotes(bithumbQuotes, BITHUMB_SPOT_TAKER_FEE, BITHUMB_SPOT_TAKER_FEE),
     applyFeeToQuotes(gateioPerpQuotes, GATEIO_PERP_TAKER_FEE, GATEIO_PERP_TAKER_FEE),
     usdtKrw,
-    reverseThresholdPct,
+    nearZeroMaxAbsPct,
   );
   const prefilterCoins = prefilter.map((o) => o.coin);
-  if (!prefilterCoins.length) throw new Error("No reverse-premium candidate passes the threshold.");
+  if (!prefilterCoins.length) throw new Error("No near-zero premium candidate passes the threshold.");
 
   const perpRawQuotes: Record<string, MarketQuote> = {};
   const baseQtyByCoin: Record<string, number> = {};
@@ -2069,8 +2210,8 @@ export async function runReverseCycle(
   const perpEff = applyFeeToQuotes(perpRawQuotes, GATEIO_PERP_TAKER_FEE, GATEIO_PERP_TAKER_FEE);
   const gateSpotEff = applyFeeToQuotes(gateioSpotRawQuotes, GATEIO_SPOT_TAKER_FEE, GATEIO_SPOT_TAKER_FEE);
 
-  const opps = computeReverseOpportunities(bithumbEff, perpEff, usdtKrw, reverseThresholdPct);
-  console.info(`\n[1] 역프 후보 (VWAP 기준) – 상위 ${Math.min(15, opps.length)}개`);
+  const opps = computeNearZeroOpportunities(bithumbEff, perpEff, usdtKrw, nearZeroMaxAbsPct);
+  console.info(`\n[1] B2G 후보 (김프 0% 근접, VWAP 기준) – 상위 ${Math.min(15, opps.length)}개`);
   showTop(opps, 15);
 
   const entryTopN = Math.max(0, Math.trunc(options?.entryTopN ?? 10));
@@ -2140,9 +2281,9 @@ export async function runReverseCycle(
     const bithumbFee = feeAdjustedQuote(bithumbRaw, BITHUMB_SPOT_TAKER_FEE, BITHUMB_SPOT_TAKER_FEE);
     const perpFee = feeAdjustedQuote(perpRawQuote, GATEIO_PERP_TAKER_FEE, GATEIO_PERP_TAKER_FEE);
     const currentPct = premiumPct(bithumbFee.ask, perpFee.bid, usdtKrw);
-    console.info(`[4] 현재 역프(진입) = ${currentPct.toFixed(3)}% (threshold=${reverseThresholdPct.toFixed(3)}%)`);
-    if (currentPct > reverseThresholdPct) {
-      console.info("진입 조건 미충족: 스킵");
+    console.info(`[4] 현재 김프 = ${currentPct >= 0 ? "+" : ""}${currentPct.toFixed(3)}% (허용범위: ±${nearZeroMaxAbsPct.toFixed(3)}%)`);
+    if (Math.abs(currentPct) > nearZeroMaxAbsPct) {
+      console.info("진입 조건 미충족 (0%에서 너무 벗어남): 스킵");
       continue;
     }
 

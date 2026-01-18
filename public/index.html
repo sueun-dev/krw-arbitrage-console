@@ -1,136 +1,307 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Arbitrage Watch</title>
+    <title>Arbitrage Dashboard</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <div class="page">
-      <header class="topbar">
-        <div class="brand">
-          <div class="eyebrow"><span id="domestic-pair">Korean Exchange</span> - <span id="overseas-pair">GateIO</span></div>
-          <h1>Reverse Watch</h1>
-          <p class="sub">
-            Live best bid/ask monitor. Perp vs spot gaps, transfer networks, and fees in one view.
-          </p>
+    <div class="app">
+      <!-- Sidebar -->
+      <aside class="sidebar">
+        <div class="sidebar-brand">
+          <div class="logo">A</div>
+          <span class="brand-text">Arbitrage</span>
         </div>
-        <div class="meta">
-          <div class="live-row">
-            <span id="status" class="status-badge">Connecting...</span>
-            <span class="status-hint">SSE</span>
+        <nav class="sidebar-nav">
+          <button class="nav-item active" data-tab="dashboard">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="7" height="7" rx="1"/>
+              <rect x="14" y="3" width="7" height="7" rx="1"/>
+              <rect x="3" y="14" width="7" height="7" rx="1"/>
+              <rect x="14" y="14" width="7" height="7" rx="1"/>
+            </svg>
+            <span>Dashboard</span>
+          </button>
+          <button class="nav-item" data-tab="b2g">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M5 12h14M12 5l7 7-7 7"/>
+            </svg>
+            <span>B2G Routes</span>
+            <span class="nav-badge" id="b2g-count">0</span>
+          </button>
+          <button class="nav-item" data-tab="g2b">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M19 12H5M12 19l-7-7 7-7"/>
+            </svg>
+            <span>G2B Routes</span>
+            <span class="nav-badge" id="g2b-count">0</span>
+          </button>
+          <button class="nav-item" data-tab="cycles">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17 3v6h-6M7 21v-6h6"/>
+              <path d="M3 12a9 9 0 0 1 15-6.7L21 9M21 12a9 9 0 0 1-15 6.7L3 15"/>
+            </svg>
+            <span>Cycle Routes</span>
+            <span class="nav-badge" id="cycle-count">0</span>
+          </button>
+          <button class="nav-item" data-tab="all">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="8" y1="6" x2="21" y2="6"/>
+              <line x1="8" y1="12" x2="21" y2="12"/>
+              <line x1="8" y1="18" x2="21" y2="18"/>
+              <line x1="3" y1="6" x2="3.01" y2="6"/>
+              <line x1="3" y1="12" x2="3.01" y2="12"/>
+              <line x1="3" y1="18" x2="3.01" y2="18"/>
+            </svg>
+            <span>All Coins</span>
+          </button>
+        </nav>
+        <div class="sidebar-footer">
+          <a href="/dex" class="nav-item" style="text-decoration: none; margin-bottom: 8px;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>
+              <polyline points="17 6 23 6 23 12"/>
+            </svg>
+            <span>DEX Contango</span>
+          </a>
+          <div class="connection-status">
+            <span class="status-dot" id="status-dot"></span>
+            <span id="status-text">Connecting...</span>
           </div>
-          <div class="meta-line" id="status-detail">Status: --</div>
-          <div class="meta-line" id="config-meta">Config: --</div>
         </div>
-      </header>
+      </aside>
 
-      <section class="stats-grid">
-        <div class="stat-card">
-          <div class="label">USDT/KRW</div>
-          <div class="value" id="usdtKrw">--</div>
-        </div>
-        <div class="stat-card">
-          <div class="label">Time</div>
-          <div class="value" id="time">--</div>
-        </div>
-      </section>
+      <!-- Main Content -->
+      <main class="main">
+        <!-- Header -->
+        <header class="header">
+          <div class="header-left">
+            <h1 class="page-title" id="page-title">Dashboard</h1>
+            <span class="page-subtitle" id="page-subtitle">Real-time arbitrage monitoring</span>
+          </div>
+          <div class="header-right">
+            <div class="header-stat">
+              <span class="stat-label">USDT/KRW</span>
+              <span class="stat-value" id="usdtKrw">--</span>
+            </div>
+            <div class="header-stat">
+              <span class="stat-label">Last Update</span>
+              <span class="stat-value" id="time">--</span>
+            </div>
+          </div>
+        </header>
 
-      <section class="controls">
-        <details class="controls-details" id="controls-details">
-          <summary class="controls-summary">
-            <span>Exchange Options</span>
-            <span class="controls-hint">Show / Hide</span>
-          </summary>
-          <div class="controls-panel">
-            <div class="control-block">
-              <div class="block-head">
-                <h2>Exchanges</h2>
-                <p class="helper">Select Korean and overseas sources for comparison.</p>
-              </div>
-              <div class="toggle-stack">
-                <div class="exchange-toggle">
-                  <span class="label">Korean Exchange</span>
-                  <div class="toggle-group">
-                    <button type="button" class="toggle-button" data-domestic="bithumb">Bithumb</button>
-                    <button type="button" class="toggle-button" data-domestic="upbit">Upbit</button>
+        <!-- Tab Content -->
+        <div class="content">
+          <!-- Dashboard Tab -->
+          <section class="tab-panel active" id="panel-dashboard">
+            <div class="dashboard-grid">
+              <!-- Stats Row -->
+              <div class="stats-row">
+                <div class="stat-card">
+                  <div class="stat-icon green">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>
+                      <polyline points="17 6 23 6 23 12"/>
+                    </svg>
+                  </div>
+                  <div class="stat-info">
+                    <span class="stat-title">Best B2G</span>
+                    <span class="stat-number" id="best-b2g">--</span>
                   </div>
                 </div>
-                <div class="exchange-toggle">
-                  <span class="label">Overseas Exchange</span>
-                  <div class="toggle-group">
-                    <button type="button" class="toggle-button" data-overseas="gateio">GateIO</button>
-                    <button type="button" class="toggle-button" data-overseas="bybit">Bybit</button>
-                    <button type="button" class="toggle-button" data-overseas="okx">OKX</button>
-                    <button type="button" class="toggle-button" data-overseas="hyperliquid">Hyperliquid</button>
-                    <button type="button" class="toggle-button" data-overseas="lighter">Lighter</button>
+                <div class="stat-card">
+                  <div class="stat-icon blue">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/>
+                      <polyline points="17 18 23 18 23 12"/>
+                    </svg>
+                  </div>
+                  <div class="stat-info">
+                    <span class="stat-title">Best G2B</span>
+                    <span class="stat-number" id="best-g2b">--</span>
+                  </div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-icon purple">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M17 3v6h-6M7 21v-6h6"/>
+                      <path d="M3 12a9 9 0 0 1 15-6.7L21 9M21 12a9 9 0 0 1-15 6.7L3 15"/>
+                    </svg>
+                  </div>
+                  <div class="stat-info">
+                    <span class="stat-title">Best Cycle</span>
+                    <span class="stat-number" id="best-cycle">--</span>
+                  </div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-icon orange">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="12" cy="12" r="10"/>
+                      <polyline points="12 6 12 12 16 14"/>
+                    </svg>
+                  </div>
+                  <div class="stat-info">
+                    <span class="stat-title">Total Coins</span>
+                    <span class="stat-number" id="total-coins">--</span>
                   </div>
                 </div>
               </div>
-            </div>
-          </div>
-        </details>
-      </section>
 
-      <main class="results">
-        <section class="panel panel-route">
-          <div class="panel-head">
-            <div class="panel-head-title">
-              <h2>Optimal Cycle Routes</h2>
-              <span class="panel-sub" id="active-pair">Auto: All exchanges</span>
-            </div>
-            <div class="panel-head-actions">
-              <div class="sort-group">
-                <span class="sort-label">Sort</span>
-                <div class="toggle-group compact">
-                  <button type="button" class="toggle-button active" data-route-sort="profit">Profit</button>
-                  <button type="button" class="toggle-button" data-route-sort="name">Name</button>
-                  <button type="button" class="toggle-button" data-route-fix>Fix</button>
+              <!-- Top Opportunities -->
+              <div class="panel-row">
+                <div class="panel">
+                  <div class="panel-header">
+                    <h2>Top B2G (0% Premium)</h2>
+                    <span class="panel-badge">KRW → USDT</span>
+                  </div>
+                  <div class="panel-body" id="dashboard-b2g"></div>
+                </div>
+                <div class="panel">
+                  <div class="panel-header">
+                    <h2>Top G2B (High Premium)</h2>
+                    <span class="panel-badge">USDT → KRW</span>
+                  </div>
+                  <div class="panel-body" id="dashboard-g2b"></div>
                 </div>
               </div>
-              <span class="hint">Auto-ranked cycle opportunities (b2g + g2b)</span>
+
+              <!-- Best Cycles -->
+              <div class="panel full-width">
+                <div class="panel-header">
+                  <h2>Top Cycle Routes</h2>
+                  <span class="panel-badge">B→G→B Round Trip</span>
+                </div>
+                <div class="panel-body" id="dashboard-cycles"></div>
+              </div>
             </div>
-          </div>
-          <div id="list-routes" class="card-grid"></div>
-        </section>
+          </section>
+
+          <!-- B2G Tab -->
+          <section class="tab-panel" id="panel-b2g">
+            <div class="panel full-height">
+              <div class="panel-header">
+                <h2>B2G Routes (Bithumb → Overseas)</h2>
+                <p class="panel-desc">Find coins with ~0% kimchi premium for fund transfer with minimal loss</p>
+              </div>
+              <div class="panel-toolbar">
+                <div class="exchange-selector">
+                  <span class="selector-label">Overseas:</span>
+                  <div class="button-group" id="b2g-overseas-selector">
+                    <button class="btn-toggle active" data-overseas="gateio">GateIO</button>
+                    <button class="btn-toggle" data-overseas="bybit">Bybit</button>
+                    <button class="btn-toggle" data-overseas="okx">OKX</button>
+                    <button class="btn-toggle" data-overseas="hyperliquid">HL</button>
+                  </div>
+                </div>
+                <div class="sort-selector">
+                  <span class="selector-label">Sort:</span>
+                  <div class="button-group">
+                    <button class="btn-toggle active" data-sort="abs">|Premium|</button>
+                    <button class="btn-toggle" data-sort="edge">Edge</button>
+                  </div>
+                </div>
+              </div>
+              <div class="routes-grid" id="list-b2g"></div>
+            </div>
+          </section>
+
+          <!-- G2B Tab -->
+          <section class="tab-panel" id="panel-g2b">
+            <div class="panel full-height">
+              <div class="panel-header">
+                <h2>G2B Routes (Overseas → Bithumb)</h2>
+                <p class="panel-desc">Find coins with high kimchi premium for profit realization</p>
+              </div>
+              <div class="panel-toolbar">
+                <div class="exchange-selector">
+                  <span class="selector-label">Overseas:</span>
+                  <div class="button-group" id="g2b-overseas-selector">
+                    <button class="btn-toggle active" data-overseas="gateio">GateIO</button>
+                    <button class="btn-toggle" data-overseas="bybit">Bybit</button>
+                    <button class="btn-toggle" data-overseas="okx">OKX</button>
+                    <button class="btn-toggle" data-overseas="hyperliquid">HL</button>
+                  </div>
+                </div>
+                <div class="sort-selector">
+                  <span class="selector-label">Sort:</span>
+                  <div class="button-group">
+                    <button class="btn-toggle active" data-sort="premium">Premium</button>
+                    <button class="btn-toggle" data-sort="edge">Edge</button>
+                  </div>
+                </div>
+              </div>
+              <div class="routes-grid" id="list-g2b"></div>
+            </div>
+          </section>
+
+          <!-- Cycles Tab -->
+          <section class="tab-panel" id="panel-cycles">
+            <div class="panel full-height">
+              <div class="panel-header">
+                <h2>Cycle Routes (B → G → B)</h2>
+                <p class="panel-desc">Complete round-trip arbitrage opportunities combining B2G and G2B</p>
+              </div>
+              <div class="panel-toolbar">
+                <div class="sort-selector">
+                  <span class="selector-label">Sort:</span>
+                  <div class="button-group" id="cycle-sort-selector">
+                    <button class="btn-toggle active" data-sort="profit">Net Profit</button>
+                    <button class="btn-toggle" data-sort="name">Name</button>
+                  </div>
+                </div>
+                <button class="btn-toggle" id="cycle-fix-btn">Fix Order</button>
+              </div>
+              <div class="routes-grid" id="list-cycles"></div>
+            </div>
+          </section>
+
+          <!-- All Coins Tab -->
+          <section class="tab-panel" id="panel-all">
+            <div class="panel full-height">
+              <div class="panel-header">
+                <h2>All Coins</h2>
+                <p class="panel-desc">Complete list of tradeable coins with premium data</p>
+              </div>
+              <div class="panel-toolbar">
+                <div class="exchange-selector">
+                  <span class="selector-label">Korean:</span>
+                  <div class="button-group" id="all-domestic-selector">
+                    <button class="btn-toggle active" data-domestic="bithumb">Bithumb</button>
+                    <button class="btn-toggle" data-domestic="upbit">Upbit</button>
+                  </div>
+                </div>
+                <div class="exchange-selector">
+                  <span class="selector-label">Overseas:</span>
+                  <div class="button-group" id="all-overseas-selector">
+                    <button class="btn-toggle active" data-overseas="gateio">GateIO</button>
+                    <button class="btn-toggle" data-overseas="bybit">Bybit</button>
+                    <button class="btn-toggle" data-overseas="okx">OKX</button>
+                    <button class="btn-toggle" data-overseas="hyperliquid">HL</button>
+                  </div>
+                </div>
+              </div>
+              <div class="table-container">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Coin</th>
+                      <th>Premium</th>
+                      <th>Edge</th>
+                      <th id="th-domestic">Domestic Ask</th>
+                      <th id="th-overseas">Overseas Bid</th>
+                    </tr>
+                  </thead>
+                  <tbody id="list-all"></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        </div>
       </main>
-
-      <section class="panel all-panel">
-        <div class="panel-head panel-head-stack">
-          <div class="panel-title">
-            <h2>All Coins</h2>
-            <span class="hint" id="all-count">--</span>
-          </div>
-          <div class="panel-controls">
-            <div class="panel-label">All Coins Source</div>
-            <div class="panel-toggle-groups">
-              <div class="toggle-group compact">
-                <button type="button" class="toggle-button" data-domestic="bithumb">Bithumb</button>
-                <button type="button" class="toggle-button" data-domestic="upbit">Upbit</button>
-              </div>
-              <div class="toggle-group compact">
-                <button type="button" class="toggle-button" data-overseas="gateio">GateIO</button>
-                <button type="button" class="toggle-button" data-overseas="bybit">Bybit</button>
-                <button type="button" class="toggle-button" data-overseas="okx">OKX</button>
-                <button type="button" class="toggle-button" data-overseas="hyperliquid">Hyperliquid</button>
-                <button type="button" class="toggle-button" data-overseas="lighter">Lighter</button>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="table-wrap">
-          <div class="table-head">
-            <div>#</div>
-            <div>Coin</div>
-            <div>Premium</div>
-            <div>Edge</div>
-            <div id="domestic-ask-header">Domestic Ask</div>
-            <div id="overseas-gap-header">GateIO Gap Price</div>
-          </div>
-          <div id="list-all" class="table-body"></div>
-        </div>
-      </section>
     </div>
     <script src="/app.js" type="module"></script>
   </body>

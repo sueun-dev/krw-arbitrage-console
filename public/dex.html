@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DEX Contango Dashboard</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <style>
+      .dex-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+      }
+      .dex-badge.hyperliquid { background: rgba(0, 255, 136, 0.15); color: #00ff88; }
+      .dex-badge.dydx { background: rgba(108, 92, 231, 0.15); color: #6c5ce7; }
+      .dex-badge.paradex { background: rgba(255, 234, 167, 0.15); color: #ffeaa7; }
+      .dex-badge.lighter { background: rgba(0, 206, 201, 0.15); color: #00cec9; }
+      .dex-badge.backpack { background: rgba(255, 107, 107, 0.15); color: #ff6b6b; }
+      .dex-badge.apex { background: rgba(116, 185, 255, 0.15); color: #74b9ff; }
+      .dex-badge.defx { background: rgba(253, 121, 168, 0.15); color: #fd79a8; }
+      .dex-badge.woofipro { background: rgba(45, 52, 54, 0.4); color: #dfe6e9; }
+      .dex-badge.modetrade { background: rgba(162, 155, 254, 0.15); color: #a29bfe; }
+      .dex-badge.hibachi { background: rgba(255, 159, 67, 0.15); color: #ff9f43; }
+      .dex-badge.delta { background: rgba(0, 184, 148, 0.15); color: #00b894; }
+      /* Custom REST API DEXs */
+      .dex-badge.vertex { background: rgba(138, 43, 226, 0.15); color: #8a2be2; }
+      .dex-badge.drift { background: rgba(255, 215, 0, 0.15); color: #ffd700; }
+      .dex-badge.gmx { background: rgba(59, 130, 246, 0.15); color: #3b82f6; }
+      .dex-badge.jupiter { background: rgba(200, 162, 200, 0.15); color: #c8a2c8; }
+      .dex-badge.edgex { background: rgba(255, 99, 71, 0.15); color: #ff6347; }
+      .dex-badge.grvt { background: rgba(75, 0, 130, 0.15); color: #4b0082; }
+      .dex-badge.reya { background: rgba(0, 191, 255, 0.15); color: #00bfff; }
+      .dex-badge.nado { background: rgba(50, 205, 50, 0.15); color: #32cd32; }
+      .dex-badge.ostium { background: rgba(218, 165, 32, 0.15); color: #daa520; }
+      .dex-badge.extended { background: rgba(186, 85, 211, 0.15); color: #ba55d3; }
+      .dex-badge.pacifica { background: rgba(64, 224, 208, 0.15); color: #40e0d0; }
+      .dex-badge.varational { background: rgba(255, 140, 0, 0.15); color: #ff8c00; }
+
+      .contango-positive { color: #00ff88; }
+      .contango-negative { color: #ff6b6b; }
+
+      .funding-rate {
+        font-size: 11px;
+        opacity: 0.7;
+      }
+      .funding-positive { color: #00ff88; }
+      .funding-negative { color: #ff6b6b; }
+
+      .strategy-tag {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 10px;
+        font-weight: 600;
+      }
+      .strategy-tag.long-short { background: rgba(0, 255, 136, 0.2); color: #00ff88; }
+      .strategy-tag.funding { background: rgba(116, 185, 255, 0.2); color: #74b9ff; }
+
+      .dex-info {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .dex-info .dex-name {
+        font-weight: 600;
+      }
+      .dex-info .dex-chain {
+        font-size: 10px;
+        opacity: 0.6;
+      }
+
+      /* Enhanced Route Card Styles */
+      .route-card {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 12px;
+        transition: all 0.2s ease;
+      }
+      .route-card:hover {
+        background: rgba(255, 255, 255, 0.05);
+        border-color: rgba(255, 255, 255, 0.15);
+      }
+      .route-card.compact {
+        padding: 12px;
+      }
+
+      .route-card-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+      .route-rank {
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.5);
+        min-width: 24px;
+      }
+      .route-coin-info {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        flex: 1;
+      }
+      .route-coin {
+        font-size: 16px;
+        font-weight: 700;
+        color: #fff;
+      }
+      .route-path {
+        font-size: 11px;
+        color: rgba(255, 255, 255, 0.5);
+      }
+      .route-premium {
+        font-size: 18px;
+        font-weight: 700;
+        margin-left: auto;
+      }
+      .route-premium.positive { color: #00ff88; }
+      .route-premium.negative { color: #ff6b6b; }
+
+      /* Route Details - Two Column Layout */
+      .route-details {
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 12px;
+      }
+      .route-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .route-leg {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .route-leg:last-child {
+        text-align: right;
+      }
+      .leg-label {
+        font-size: 10px;
+        color: rgba(255, 255, 255, 0.5);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .leg-exchange {
+        font-size: 13px;
+        font-weight: 600;
+        color: #00ff88;
+      }
+      .route-leg:last-child .leg-exchange {
+        color: #ff6b6b;
+      }
+      .leg-price {
+        font-size: 15px;
+        font-weight: 700;
+        color: #fff;
+      }
+      .leg-price-usdt {
+        font-size: 11px;
+        color: rgba(255, 255, 255, 0.5);
+      }
+      .leg-chain {
+        font-size: 10px;
+        color: rgba(255, 255, 255, 0.4);
+      }
+      .route-arrow {
+        font-size: 20px;
+        color: rgba(255, 255, 255, 0.3);
+        padding: 0 8px;
+      }
+
+      /* Route Metrics */
+      .route-metrics {
+        display: flex;
+        gap: 16px;
+        margin-bottom: 12px;
+      }
+      .route-metric {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .route-metric .label {
+        font-size: 10px;
+        color: rgba(255, 255, 255, 0.5);
+        text-transform: uppercase;
+      }
+      .route-metric .value {
+        font-size: 14px;
+        font-weight: 600;
+        color: #fff;
+      }
+      .route-metric .value.positive { color: #00ff88; }
+      .route-metric .value.negative { color: #ff6b6b; }
+
+      /* Route Strategy Tags */
+      .route-strategy {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .route-info-row {
+        display: flex;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      .info-tag {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        background: rgba(0, 255, 136, 0.15);
+        color: #00ff88;
+      }
+
+      /* Routes Grid */
+      .routes-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 16px;
+        max-height: calc(100vh - 280px);
+        overflow-y: auto;
+      }
+
+      /* Empty State */
+      .empty-state {
+        text-align: center;
+        padding: 40px;
+        color: rgba(255, 255, 255, 0.5);
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <!-- Sidebar -->
+      <aside class="sidebar">
+        <div class="sidebar-brand">
+          <div class="logo" style="background: linear-gradient(135deg, #00ff88, #00cec9);">D</div>
+          <span class="brand-text">DEX Contango</span>
+        </div>
+        <nav class="sidebar-nav">
+          <button class="nav-item active" data-tab="dashboard">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="7" height="7" rx="1"/>
+              <rect x="14" y="3" width="7" height="7" rx="1"/>
+              <rect x="3" y="14" width="7" height="7" rx="1"/>
+              <rect x="14" y="14" width="7" height="7" rx="1"/>
+            </svg>
+            <span>Dashboard</span>
+          </button>
+          <button class="nav-item" data-tab="contango">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>
+              <polyline points="17 6 23 6 23 12"/>
+            </svg>
+            <span>Contango</span>
+            <span class="nav-badge" id="contango-count">0</span>
+          </button>
+          <button class="nav-item" data-tab="funding">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M12 6v6l4 2"/>
+            </svg>
+            <span>Funding Arb</span>
+            <span class="nav-badge" id="funding-count">0</span>
+          </button>
+          <button class="nav-item" data-tab="all">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="8" y1="6" x2="21" y2="6"/>
+              <line x1="8" y1="12" x2="21" y2="12"/>
+              <line x1="8" y1="18" x2="21" y2="18"/>
+              <line x1="3" y1="6" x2="3.01" y2="6"/>
+              <line x1="3" y1="12" x2="3.01" y2="12"/>
+              <line x1="3" y1="18" x2="3.01" y2="18"/>
+            </svg>
+            <span>All Coins</span>
+          </button>
+        </nav>
+        <div class="sidebar-footer">
+          <a href="/" class="nav-item" style="text-decoration: none;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M19 12H5M12 19l-7-7 7-7"/>
+            </svg>
+            <span>CEX Dashboard</span>
+          </a>
+          <div class="connection-status" style="margin-top: 8px;">
+            <span class="status-dot" id="status-dot"></span>
+            <span id="status-text">Connecting...</span>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Main Content -->
+      <main class="main">
+        <!-- Header -->
+        <header class="header">
+          <div class="header-left">
+            <h1 class="page-title" id="page-title">DEX Contango</h1>
+            <span class="page-subtitle" id="page-subtitle">Perp vs Spot arbitrage on DEX</span>
+          </div>
+          <div class="header-right">
+            <div class="header-stat">
+              <span class="stat-label">USDT/KRW</span>
+              <span class="stat-value" id="usdtKrw">--</span>
+            </div>
+            <div class="header-stat">
+              <span class="stat-label">Last Update</span>
+              <span class="stat-value" id="time">--</span>
+            </div>
+          </div>
+        </header>
+
+        <!-- Tab Content -->
+        <div class="content">
+          <!-- Dashboard Tab -->
+          <section class="tab-panel active" id="panel-dashboard">
+            <div class="dashboard-grid">
+              <!-- DEX Status Cards - Row 1 -->
+              <div class="stats-row">
+                <div class="stat-card">
+                  <div class="stat-icon" style="background: rgba(0, 255, 136, 0.1);">
+                    <span style="font-size: 14px; font-weight: bold; color: #00ff88;">HL</span>
+                  </div>
+                  <div class="stat-info">
+                    <span class="stat-title">Hyperliquid</span>
+                    <span class="stat-number" id="stat-hyperliquid">--</span>
+                  </div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-icon" style="background: rgba(255, 215, 0, 0.1);">
+                    <span style="font-size: 12px; font-weight: bold; color: #ffd700;">DFT</span>
+                  </div>
+                  <div class="stat-info">
+                    <span class="stat-title">Drift</span>
+                    <span class="stat-number" id="stat-drift">--</span>
+                  </div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-icon" style="background: rgba(75, 0, 130, 0.1);">
+                    <span style="font-size: 12px; font-weight: bold; color: #9370db;">GRV</span>
+                  </div>
+                  <div class="stat-info">
+                    <span class="stat-title">GRVT</span>
+                    <span class="stat-number" id="stat-grvt">--</span>
+                  </div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-icon" style="background: rgba(0, 191, 255, 0.1);">
+                    <span style="font-size: 12px; font-weight: bold; color: #00bfff;">REY</span>
+                  </div>
+                  <div class="stat-info">
+                    <span class="stat-title">Reya</span>
+                    <span class="stat-number" id="stat-reya">--</span>
+                  </div>
+                </div>
+              </div>
+              <!-- DEX Status Cards - Row 2 -->
+              <div class="stats-row">
+                <div class="stat-card">
+                  <div class="stat-icon" style="background: rgba(186, 85, 211, 0.1);">
+                    <span style="font-size: 12px; font-weight: bold; color: #ba55d3;">EXT</span>
+                  </div>
+                  <div class="stat-info">
+                    <span class="stat-title">Extended</span>
+                    <span class="stat-number" id="stat-extended">--</span>
+                  </div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-icon" style="background: rgba(64, 224, 208, 0.1);">
+                    <span style="font-size: 12px; font-weight: bold; color: #40e0d0;">PAC</span>
+                  </div>
+                  <div class="stat-info">
+                    <span class="stat-title">Pacifica</span>
+                    <span class="stat-number" id="stat-pacifica">--</span>
+                  </div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-icon" style="background: rgba(218, 165, 32, 0.1);">
+                    <span style="font-size: 12px; font-weight: bold; color: #daa520;">OST</span>
+                  </div>
+                  <div class="stat-info">
+                    <span class="stat-title">Ostium</span>
+                    <span class="stat-number" id="stat-ostium">--</span>
+                  </div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-icon" style="background: rgba(50, 205, 50, 0.1);">
+                    <span style="font-size: 12px; font-weight: bold; color: #32cd32;">NAD</span>
+                  </div>
+                  <div class="stat-info">
+                    <span class="stat-title">Nado</span>
+                    <span class="stat-number" id="stat-nado">--</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Strategy Explanation -->
+              <div class="panel full-width">
+                <div class="panel-header">
+                  <h2>Contango Strategy</h2>
+                  <span class="panel-badge">DEX Perp vs Domestic Spot</span>
+                </div>
+                <div class="panel-body" style="padding: 16px; font-size: 13px; line-height: 1.6;">
+                  <p><strong>Contango (콘탱고):</strong> DEX Perp 가격 > 국내 현물 가격</p>
+                  <p style="margin-top: 8px;">
+                    <span class="strategy-tag long-short">Long Domestic / Short DEX</span>
+                    국내에서 매수 (현물) → DEX에서 숏 (Perp 시장가 매도)
+                  </p>
+                  <p style="margin-top: 8px; opacity: 0.7;">
+                    Contango % = (DEX Perp Bid - 국내 Ask × USDT/KRW) / (국내 Ask × USDT/KRW) × 100
+                  </p>
+                </div>
+              </div>
+
+              <!-- Top Contango Opportunities -->
+              <div class="panel full-width">
+                <div class="panel-header">
+                  <h2>Top Contango Opportunities</h2>
+                  <span class="panel-badge">Positive Contango = Profit</span>
+                </div>
+                <div class="panel-body" id="dashboard-contango"></div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Contango Tab -->
+          <section class="tab-panel" id="panel-contango">
+            <div class="panel full-height">
+              <div class="panel-header">
+                <h2>Contango Opportunities</h2>
+                <p class="panel-desc">DEX Perp price higher than domestic spot - profit from shorting perp</p>
+              </div>
+              <div class="panel-toolbar">
+                <div class="exchange-selector">
+                  <span class="selector-label">Domestic:</span>
+                  <div class="button-group" id="contango-domestic-selector">
+                    <button class="btn-toggle active" data-domestic="bithumb">Bithumb</button>
+                    <button class="btn-toggle" data-domestic="upbit">Upbit</button>
+                  </div>
+                </div>
+                <div class="exchange-selector">
+                  <span class="selector-label">DEX:</span>
+                  <div class="button-group" id="contango-dex-selector" style="flex-wrap: wrap; gap: 4px;">
+                    <button class="btn-toggle active" data-dex="hyperliquid">HL</button>
+                    <button class="btn-toggle" data-dex="drift">Drift</button>
+                    <button class="btn-toggle" data-dex="grvt">GRVT</button>
+                    <button class="btn-toggle" data-dex="reya">Reya</button>
+                    <button class="btn-toggle" data-dex="nado">Nado</button>
+                    <button class="btn-toggle" data-dex="ostium">Ostium</button>
+                    <button class="btn-toggle" data-dex="extended">Ext</button>
+                    <button class="btn-toggle" data-dex="pacifica">Pacifica</button>
+                  </div>
+                </div>
+              </div>
+              <div class="routes-grid" id="list-contango"></div>
+            </div>
+          </section>
+
+          <!-- Funding Tab -->
+          <section class="tab-panel" id="panel-funding">
+            <div class="panel full-height">
+              <div class="panel-header">
+                <h2>Funding Rate Arbitrage</h2>
+                <p class="panel-desc">Earn funding payments by holding perp positions against spot</p>
+              </div>
+              <div class="panel-toolbar">
+                <div class="exchange-selector">
+                  <span class="selector-label">DEX:</span>
+                  <div class="button-group" id="funding-dex-selector" style="flex-wrap: wrap; gap: 4px;">
+                    <button class="btn-toggle active" data-dex="hyperliquid">HL</button>
+                    <button class="btn-toggle" data-dex="drift">Drift</button>
+                    <button class="btn-toggle" data-dex="grvt">GRVT</button>
+                    <button class="btn-toggle" data-dex="reya">Reya</button>
+                    <button class="btn-toggle" data-dex="pacifica">Pacifica</button>
+                  </div>
+                </div>
+                <div class="sort-selector">
+                  <span class="selector-label">Sort:</span>
+                  <div class="button-group">
+                    <button class="btn-toggle active" data-sort="funding">|Funding|</button>
+                    <button class="btn-toggle" data-sort="apy">APY</button>
+                  </div>
+                </div>
+              </div>
+              <div class="routes-grid" id="list-funding"></div>
+            </div>
+          </section>
+
+          <!-- All Coins Tab -->
+          <section class="tab-panel" id="panel-all">
+            <div class="panel full-height">
+              <div class="panel-header">
+                <h2>All DEX Coins</h2>
+                <p class="panel-desc">Complete list of coins available on DEX perpetuals</p>
+              </div>
+              <div class="panel-toolbar">
+                <div class="exchange-selector">
+                  <span class="selector-label">Domestic:</span>
+                  <div class="button-group" id="all-domestic-selector">
+                    <button class="btn-toggle active" data-domestic="bithumb">Bithumb</button>
+                    <button class="btn-toggle" data-domestic="upbit">Upbit</button>
+                  </div>
+                </div>
+                <div class="exchange-selector">
+                  <span class="selector-label">DEX:</span>
+                  <div class="button-group" id="all-dex-selector" style="flex-wrap: wrap; gap: 4px;">
+                    <button class="btn-toggle active" data-dex="hyperliquid">HL</button>
+                    <button class="btn-toggle" data-dex="drift">Drift</button>
+                    <button class="btn-toggle" data-dex="grvt">GRVT</button>
+                    <button class="btn-toggle" data-dex="reya">Reya</button>
+                    <button class="btn-toggle" data-dex="nado">Nado</button>
+                    <button class="btn-toggle" data-dex="ostium">Ostium</button>
+                    <button class="btn-toggle" data-dex="extended">Ext</button>
+                    <button class="btn-toggle" data-dex="pacifica">Pacifica</button>
+                  </div>
+                </div>
+              </div>
+              <div class="table-container">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Coin</th>
+                      <th>Contango %</th>
+                      <th>Domestic Ask</th>
+                      <th>DEX Perp Bid</th>
+                      <th>Funding (8h)</th>
+                    </tr>
+                  </thead>
+                  <tbody id="list-all"></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+    <script src="/app-dex.js" type="module"></script>
+  </body>
+</html>

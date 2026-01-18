@@ -42,6 +42,13 @@ import {
   OkxSpotTickerWs,
   UpbitOrderbookWs,
 } from "./wsQuotes";
+import {
+  fetchCustomDexMarkets,
+  fetchAllCustomDexMarkets,
+  CUSTOM_DEX_LIST,
+  type CustomDexName,
+  type DexApiResult,
+} from "./dexApis";
 
 type DomesticExchange = "bithumb" | "upbit";
 
@@ -109,6 +116,153 @@ const clientsByPair: Record<DomesticExchange, Record<OverseasExchange, Set<http.
 };
 const autoClients = new Set<http.ServerResponse>();
 
+// ========== DEX Contango Stream (centralized) ==========
+const dexStreamClients = new Set<http.ServerResponse>();
+let centralDexData: Record<string, DexApiResult> = {};
+let centralDomesticPrices: Record<string, { ask: number; bid: number }> = {};
+let centralUsdtKrw = 1400; // Will be updated from Bithumb
+let lastDexStreamPayload: {
+  time: string;
+  usdtKrw: number;
+  domesticPrices: Record<string, { ask: number; bid: number }>;
+  dexPrices: Record<string, Record<string, { bid: number; ask: number; lastPrice: number; fundingRate?: number }>>;
+} | null = null;
+
+// Fetch all Bithumb prices and USDT/KRW rate directly
+async function fetchAllDomesticPrices(): Promise<Record<string, { ask: number; bid: number }>> {
+  const prices: Record<string, { ask: number; bid: number }> = {};
+  try {
+    const res = await fetch("https://api.bithumb.com/public/ticker/ALL_KRW");
+    const data = await res.json();
+    if (data?.status === "0000" && data?.data) {
+      for (const [coin, info] of Object.entries(data.data)) {
+        if (coin === "date" || typeof info !== "object") continue;
+        const tickerInfo = info as any;
+        // Bithumb ticker: closing_price is the current price
+        // For spread estimation: use closing_price +/- 0.1%
+        const price = parseFloat(tickerInfo?.closing_price || "0");
+        if (price > 0) {
+          prices[coin] = {
+            ask: price * 1.001,  // Estimated ask (slightly higher)
+            bid: price * 0.999,  // Estimated bid (slightly lower)
+          };
+        }
+      }
+      // Get USDT/KRW rate from Bithumb
+      const usdtInfo = data.data["USDT"] as any;
+      if (usdtInfo?.closing_price) {
+        centralUsdtKrw = parseFloat(usdtInfo.closing_price);
+      }
+    }
+  } catch (err) {
+    console.warn(`[DEX] Failed to fetch Bithumb prices: ${err}`);
+  }
+  return prices;
+}
+
+// Build dexPrices from centralDexData
+function buildCustomDexPrices(): Record<string, Record<string, { bid: number; ask: number; lastPrice: number; fundingRate?: number }>> {
+  const dexPrices: Record<string, Record<string, { bid: number; ask: number; lastPrice: number; fundingRate?: number }>> = {};
+  for (const [dex, result] of Object.entries(centralDexData)) {
+    if (result.markets && Object.keys(result.markets).length > 0) {
+      dexPrices[dex] = {};
+      for (const [coin, info] of Object.entries(result.markets)) {
+        if (info.bid && info.bid > 0) {
+          dexPrices[dex][coin] = {
+            bid: info.bid,
+            ask: info.ask,
+            lastPrice: info.lastPrice,
+            fundingRate: info.fundingRate,
+          };
+        }
+      }
+    }
+  }
+  return dexPrices;
+}
+
+// Fetch all custom DEX data and domestic prices centrally
+async function fetchAllCustomDexDataCentral(): Promise<void> {
+  if (dexStreamClients.size === 0) return; // Skip if no clients
+
+  try {
+    // Fetch both domestic prices and DEX prices in parallel
+    const [domesticPrices, dexResults] = await Promise.all([
+      fetchAllDomesticPrices(),
+      fetchAllCustomDexMarkets(),
+    ]);
+
+    centralDomesticPrices = domesticPrices;
+    centralDexData = dexResults;
+
+    console.log(`[DEX Central] Fetched ${Object.keys(domesticPrices).length} domestic coins, ${Object.keys(dexResults).length} DEXes`);
+
+    broadcastDexStream(buildCustomDexPrices());
+  } catch (err) {
+    console.warn(`[DEX Central] Failed to fetch: ${err}`);
+  }
+}
+
+function broadcastDexStream(customDexPrices: Record<string, Record<string, { bid: number; ask: number; lastPrice: number; fundingRate?: number }>>): void {
+  if (dexStreamClients.size === 0) return; // Skip if no clients
+
+  // Get hyperliquid prices from the main stream (for HL data)
+  const hlPayload = lastPayloads.bithumb.hyperliquid;
+  const hyperliquidPrices: Record<string, { bid: number; ask: number; lastPrice: number; fundingRate?: number }> = {};
+
+  if (hlPayload?.rows) {
+    for (const row of hlPayload.rows) {
+      if (!row.coin || row.coin.includes("→")) continue;
+
+      // Hyperliquid prices
+      const dexBid = (row as any).outOverseasBid || (row as any).overseasBid || (row as any).gateioSpotBid;
+      const dexAsk = (row as any).backOverseasAsk || (row as any).overseasAsk || (row as any).gateioSpotAsk;
+      if (dexBid && dexBid > 0) {
+        hyperliquidPrices[row.coin] = {
+          bid: dexBid,
+          ask: dexAsk,
+          lastPrice: dexBid,
+          fundingRate: (row as any).fundingRate || 0,
+        };
+      }
+    }
+  }
+
+  // Use centrally fetched domestic prices (ALL coins from Bithumb)
+  const domesticPrices = centralDomesticPrices;
+
+  // Skip if no domestic prices yet
+  if (Object.keys(domesticPrices).length === 0) return;
+
+  // Merge hyperliquid with custom DEX prices
+  const allDexPrices = { hyperliquid: hyperliquidPrices, ...customDexPrices };
+
+  const payload = {
+    time: new Date().toLocaleTimeString(),
+    usdtKrw: centralUsdtKrw,
+    domesticPrices,
+    dexPrices: allDexPrices,
+  };
+
+  lastDexStreamPayload = payload;
+  const data = `event: tick\ndata: ${JSON.stringify(payload)}\n\n`;
+
+  for (const res of dexStreamClients) {
+    res.write(data);
+  }
+}
+
+// Start periodic custom DEX fetching
+setInterval(() => {
+  void fetchAllCustomDexDataCentral();
+}, 5000);
+
+// Also broadcast when main stream updates
+function onMainStreamUpdate(): void {
+  if (dexStreamClients.size === 0) return; // Skip if no clients
+  broadcastDexStream(buildCustomDexPrices());
+}
+
 async function buildSharedOverseasResources(overseas: OverseasExchange): Promise<SharedOverseasResources> {
   const gateSpot =
     overseas === "lighter"
@@ -141,14 +295,14 @@ async function buildSharedOverseasResources(overseas: OverseasExchange): Promise
       return {};
     }),
     overseas === "bybit"
-      ? bybitSpotAndPerpSymbols(gateSpot, gatePerp)
+      ? bybitSpotAndPerpSymbols(gateSpot!, gatePerp!)
       : overseas === "okx"
-        ? okxSpotAndPerpSymbols(gateSpot, gatePerp)
+        ? okxSpotAndPerpSymbols(gateSpot!, gatePerp!)
         : overseas === "hyperliquid"
-          ? hyperliquidSpotAndPerpSymbols(gateSpot, gatePerp)
+          ? hyperliquidSpotAndPerpSymbols(gateSpot!, gatePerp!)
           : overseas === "lighter"
             ? lighterSpotAndPerpSymbols()
-            : gateioSpotAndPerpSymbols(gateSpot, gatePerp),
+            : gateioSpotAndPerpSymbols(gateSpot!, gatePerp!),
   ]);
 
   const coins = new Set<string>();
@@ -330,6 +484,11 @@ function broadcast(domestic: DomesticExchange, overseas: OverseasExchange, paylo
       }
     }
   }
+
+  // Also broadcast to DEX stream clients when hyperliquid updates
+  if (domestic === "bithumb" && overseas === "hyperliquid" && dexStreamClients.size) {
+    onMainStreamUpdate();
+  }
 }
 
 function broadcastStatus(domestic: DomesticExchange, overseas: OverseasExchange, status: WatchStatus): void {
@@ -342,10 +501,16 @@ function broadcastStatus(domestic: DomesticExchange, overseas: OverseasExchange,
 
 function buildAggregatePayload(base: WatchReverseTick): WatchReverseTick | null {
   const rows: WatchReverseTick["rows"] = [];
+  const allWatchCoins = new Set<string>();
+
   for (const domestic of DOMESTIC_EXCHANGES) {
     for (const overseas of OVERSEAS_EXCHANGES) {
       const payload = lastPayloads[domestic][overseas];
       if (!payload || !Array.isArray(payload.rows)) continue;
+      // watchCoins 수집
+      if (Array.isArray(payload.watchCoins)) {
+        for (const c of payload.watchCoins) allWatchCoins.add(c);
+      }
       const slice = payload.rows.slice(0, AUTO_MAX_ROWS_PER_PAIR);
       for (const row of slice) {
         if (row.missing) continue;
@@ -381,6 +546,7 @@ function buildAggregatePayload(base: WatchReverseTick): WatchReverseTick | null 
     ...base,
     mode: "auto",
     rows: trimmed,
+    watchCoins: Array.from(allWatchCoins).sort(),
     closeCoins: [],
     farCoins: [],
   };
@@ -404,7 +570,7 @@ async function startWatch(domestic: DomesticExchange, overseas: OverseasExchange
       overseasExchange: overseas,
       fullUniverse: true,
       useWebsocket: true,
-      wsOnly: true,
+      wsOnly: false, // REST fallback enabled for coins without WS data
       sharedOverseas,
       sharedDomestic: sharedDomesticResources,
     },
@@ -530,6 +696,32 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Centralized DEX stream for DEX Contango page
+  if (url.pathname === "/api/dex-stream") {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+    res.write(`event: ready\ndata: ${JSON.stringify({ ok: true })}\n\n`);
+    // Send last payload if available and has data
+    if (lastDexStreamPayload && Object.keys(lastDexStreamPayload.domesticPrices || {}).length > 0) {
+      res.write(`event: tick\ndata: ${JSON.stringify(lastDexStreamPayload)}\n\n`);
+    }
+    const isFirstClient = dexStreamClients.size === 0;
+    dexStreamClients.add(res);
+    req.on("close", () => {
+      dexStreamClients.delete(res);
+    });
+    // Immediately broadcast current data and fetch custom DEX data
+    if (isFirstClient) {
+      // Trigger immediate broadcast with existing main stream data
+      onMainStreamUpdate();
+      void fetchAllCustomDexDataCentral();
+    }
+    return;
+  }
+
   if (url.pathname === "/api/config") {
     if (req.method === "GET") {
       sendJson(res, 200, currentConfig);
@@ -556,12 +748,46 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Custom DEX API endpoints (non-CCXT exchanges)
+  if (url.pathname === "/api/dex") {
+    const dex = url.searchParams.get("dex") as CustomDexName | null;
+    if (dex && CUSTOM_DEX_LIST.includes(dex)) {
+      try {
+        const result = await fetchCustomDexMarkets(dex);
+        sendJson(res, 200, result);
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    } else {
+      sendJson(res, 400, { error: `Invalid DEX. Valid options: ${CUSTOM_DEX_LIST.join(", ")}` });
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/dex/all") {
+    try {
+      const results = await fetchAllCustomDexMarkets();
+      sendJson(res, 200, results);
+    } catch (err) {
+      sendJson(res, 500, { error: String(err) });
+    }
+    return;
+  }
+
   if (url.pathname === "/" || url.pathname === "/index.html") {
     await serveStatic(res, path.join(publicDir, "index.html"));
     return;
   }
+  if (url.pathname === "/dex" || url.pathname === "/dex.html") {
+    await serveStatic(res, path.join(publicDir, "dex.html"));
+    return;
+  }
   if (url.pathname === "/app.js") {
     await serveStatic(res, path.join(publicDir, "app.js"));
+    return;
+  }
+  if (url.pathname === "/app-dex.js") {
+    await serveStatic(res, path.join(publicDir, "app-dex.js"));
     return;
   }
   if (url.pathname === "/styles.css") {
@@ -578,6 +804,10 @@ setInterval(() => {
     for (const group of Object.values(domesticGroup)) {
       for (const res of group) res.write(`: ping ${Date.now()}\n\n`);
     }
+  }
+  // Ping DEX stream clients
+  for (const res of dexStreamClients) {
+    res.write(`: ping ${Date.now()}\n\n`);
   }
 }, 15000);
 

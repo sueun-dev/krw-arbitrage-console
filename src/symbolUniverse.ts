@@ -110,7 +110,7 @@ export async function krwSymbolsByBase(exchange: Exchange): Promise<Record<strin
 
 export async function bithumbKrwSymbolsRest(): Promise<Record<string, string>> {
   const symbols: Record<string, string> = {};
-  const payload = await fetchJson<any>("https://api.bithumb.com/public/orderbook/ALL_KRW", { timeoutMs: 5000 });
+  const payload = await fetchJson<any>("https://api.bithumb.com/public/orderbook/ALL_KRW", { timeoutMs: 15000 });
   const data = payload?.data;
   if (!data || typeof data !== "object") return symbols;
   for (const [key, value] of Object.entries<any>(data)) {
@@ -125,7 +125,7 @@ export async function bithumbKrwSymbolsRest(): Promise<Record<string, string>> {
 
 export async function upbitKrwSymbolsRest(): Promise<Record<string, string>> {
   const symbols: Record<string, string> = {};
-  const payload = await fetchJson<any[]>("https://api.upbit.com/v1/market/all?isDetails=false", { timeoutMs: 5000 });
+  const payload = await fetchJson<any[]>("https://api.upbit.com/v1/market/all?isDetails=false", { timeoutMs: 15000 });
   if (!Array.isArray(payload)) return symbols;
   for (const entry of payload) {
     const market = typeof entry?.market === "string" ? entry.market : "";
@@ -281,7 +281,7 @@ export async function hyperliquidSpotAndPerpSymbols(
 export async function lighterSpotAndPerpSymbols(): Promise<{ spot: Record<string, string>; perp: Record<string, string> }> {
   const spotSymbols: Record<string, string> = {};
   const perpSymbols: Record<string, string> = {};
-  const payload = await fetchJson<any>("https://mainnet.zklighter.elliot.ai/api/v1/orderBooks", { timeoutMs: 8000 });
+  const payload = await fetchJson<any>("https://mainnet.zklighter.elliot.ai/api/v1/orderBooks", { timeoutMs: 15000 });
   const entries = Array.isArray(payload)
     ? payload
     : Array.isArray(payload?.order_books)
@@ -321,6 +321,107 @@ export async function lighterSpotAndPerpSymbols(): Promise<{ spot: Record<string
   }
 
   return { spot: spotSymbols, perp: perpSymbols };
+}
+
+// ========== DEX Perp-Only Exchanges ==========
+
+export async function dydxPerpSymbols(
+  perp: Exchange,
+): Promise<Record<string, string>> {
+  await perp.loadMarkets();
+
+  const perpSymbols: Record<string, string> = {};
+  const perpMarkets: any = (perp as any).markets ?? {};
+  for (const [symbol, market] of Object.entries<any>(perpMarkets)) {
+    if (!market || market.active === false) continue;
+    if (!market.swap) continue;
+    if (market.future) continue;
+    // dYdX uses USD as quote for perps
+    if (market.quote !== "USD" && market.quote !== "USDC") continue;
+    const base = market.base;
+    if (base) perpSymbols[String(base).toUpperCase()] = symbol;
+  }
+
+  return perpSymbols;
+}
+
+export async function paradexPerpSymbols(
+  perp: Exchange,
+): Promise<Record<string, string>> {
+  await perp.loadMarkets();
+
+  const perpSymbols: Record<string, string> = {};
+  const perpMarkets: any = (perp as any).markets ?? {};
+  for (const [symbol, market] of Object.entries<any>(perpMarkets)) {
+    if (!market || market.active === false) continue;
+    if (!market.swap) continue;
+    if (market.future) continue;
+    // Paradex uses USD or USDC
+    if (market.quote !== "USD" && market.quote !== "USDC") continue;
+    const base = market.base;
+    if (base) perpSymbols[String(base).toUpperCase()] = symbol;
+  }
+
+  return perpSymbols;
+}
+
+// Generic DEX perp symbols fetcher using CCXT
+export async function getDexPerpSymbols(
+  dex: string,
+  perp: Exchange,
+): Promise<Record<string, string>> {
+  await perp.loadMarkets();
+
+  const perpSymbols: Record<string, string> = {};
+  const perpMarkets: any = (perp as any).markets ?? {};
+
+  for (const [symbol, market] of Object.entries<any>(perpMarkets)) {
+    if (!market || market.active === false) continue;
+    if (!market.swap) continue;
+    if (market.future) continue;
+    // Skip delivery/dated contracts
+    if (market.expiry || market.expiryDatetime) continue;
+    if (/-\d{6}/.test(symbol)) continue;
+
+    // Accept USD, USDC, USDT as quote currencies for perps
+    const quote = String(market.quote ?? "").toUpperCase();
+    if (quote !== "USD" && quote !== "USDC" && quote !== "USDT") continue;
+
+    const base = market.base;
+    if (base) perpSymbols[String(base).toUpperCase()] = symbol;
+  }
+
+  return perpSymbols;
+}
+
+// ========== Additional DEX Perp Symbol Fetchers ==========
+
+export async function backpackPerpSymbols(perp: Exchange): Promise<Record<string, string>> {
+  return getDexPerpSymbols("backpack", perp);
+}
+
+export async function apexPerpSymbols(perp: Exchange): Promise<Record<string, string>> {
+  return getDexPerpSymbols("apex", perp);
+}
+
+export async function defxPerpSymbols(perp: Exchange): Promise<Record<string, string>> {
+  return getDexPerpSymbols("defx", perp);
+}
+
+export async function woofiproPerpSymbols(perp: Exchange): Promise<Record<string, string>> {
+  return getDexPerpSymbols("woofipro", perp);
+}
+
+export async function modetradePerpSymbols(perp: Exchange): Promise<Record<string, string>> {
+  return getDexPerpSymbols("modetrade", perp);
+}
+
+export async function hibachiPerpSymbols(perp: Exchange): Promise<Record<string, string>> {
+  return getDexPerpSymbols("hibachi", perp);
+}
+
+export async function deltaPerpSymbols(perp: Exchange): Promise<Record<string, string>> {
+  return getDexPerpSymbols("delta", perp);
 }
 
 export async function refreshArbitrageSymbolUniverse(

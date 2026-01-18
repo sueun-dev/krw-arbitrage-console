@@ -14,7 +14,7 @@ const RATE_SOURCE_LABELS: Record<string, string> = {
 };
 
 function resolveRateSource(source?: string | null): string {
-  const value = (source ?? process.env[RATE_SOURCE_ENV] ?? "fx_usd_krw").trim().toLowerCase();
+  const value = (source ?? process.env[RATE_SOURCE_ENV] ?? "bithumb_usdt").trim().toLowerCase();
   const aliases: Record<string, string> = {
     fx: "fx_usd_krw",
     usdkrw: "fx_usd_krw",

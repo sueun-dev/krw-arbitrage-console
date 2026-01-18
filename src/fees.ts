@@ -1,4 +1,4 @@
-export const BITHUMB_SPOT_TAKER_FEE = 0.001;
+export const BITHUMB_SPOT_TAKER_FEE = 0.0004;
 export const UPBIT_SPOT_TAKER_FEE = 0.0005;
 export const GATEIO_SPOT_TAKER_FEE = 0.002;
 export const GATEIO_PERP_TAKER_FEE = 0.0005;

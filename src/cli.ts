@@ -38,11 +38,11 @@ export async function main(): Promise<void> {
     console.info("\n" + "=".repeat(60));
     console.info("ARBITRAGE (BITHUMB ↔ GATEIO)");
     console.info("=".repeat(60));
-    console.info("1) 역프 사이클: Bithumb 매수 + GateIO 선물 숏 → (전송) → GateIO 현물 매도 + 선물 청산");
-    console.info("2) 김프 사이클: GateIO 현물 매수 + GateIO 선물 숏 → (전송) → Bithumb 매도 + 선물 청산");
-    console.info("3) (스캔만) 역프: 가격차이 0% 근접 코인 리스트");
-    console.info("4) (스캔만) 역프: 전체 코인 가격 한번에 출력");
-    console.info("5) (워치) 역프 TOP N 고정 + 10초마다 갱신");
+    console.info("1) [B2G] 빗썸→해외: 김프 0% 근접 코인으로 자금이동 (빗썸 매수 + 선물 숏 헷지 → 전송 → 청산)");
+    console.info("2) [G2B] 해외→빗썸: 김프 높은 코인으로 차익실현 (해외 매수 + 선물 숏 헷지 → 전송 → 빗썸 매도)");
+    console.info("3) (스캔) 김프 0% 근접 코인 리스트");
+    console.info("4) (스캔) 전체 코인 프리미엄 출력");
+    console.info("5) (워치) 실시간 모니터링");
     console.info("0) 종료");
 
     const choice = (await rl.question("\n선택 (0-5): ")).trim();
@@ -79,14 +79,26 @@ export async function main(): Promise<void> {
     if (choice !== "1" && choice !== "2") return;
 
     const chunkUsdt = promptFloat(await rl.question("청크(USDT) [50]: "), 50.0);
-    const thresholdDefault = choice === "1" ? -0.1 : 0.1;
-    const thresholdLabel = choice === "1" ? "역프 임계값(%) (예: -0.1)" : "김프 임계값(%) (예: 0.1)";
-    let threshold = promptFloat(await rl.question(`${thresholdLabel} [${thresholdDefault}]: `), thresholdDefault);
-    if (choice === "1" && threshold > 0) threshold = 0.0;
-    if (choice === "2" && threshold < 0) threshold = 0.0;
 
-    const basisInput = promptFloat(await rl.question("GateIO 현물/선물 괴리 허용(%) (최대 0.15) [0.15]: "), 0.15);
-    const basisThresholdPct = Math.min(basisInput, 0.15);
+    let threshold: number;
+    if (choice === "1") {
+      // B2G: 김프 0%에 가까운 코인 찾기 (절대값 기준)
+      const nearZeroDefault = 0.5;
+      threshold = Math.abs(promptFloat(
+        await rl.question(`김프 허용 범위(%) ±[${nearZeroDefault}]: `),
+        nearZeroDefault,
+      ));
+    } else {
+      // G2B: 김프가 높은 코인 찾기 (최소값 기준)
+      const kimchiDefault = 0.3;
+      threshold = Math.max(0, promptFloat(
+        await rl.question(`최소 김프(%) [${kimchiDefault}]: `),
+        kimchiDefault,
+      ));
+    }
+
+    const basisInput = promptFloat(await rl.question("현물/선물 괴리 허용(%) [0.2]: "), 0.2);
+    const basisThresholdPct = Math.max(0, basisInput);
     const maxChunks = promptInt(await rl.question("진입 청크 횟수 [1]: "), 1);
 
     if (choice === "1") {

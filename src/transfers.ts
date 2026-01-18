@@ -156,3 +156,177 @@ export async function gateioCurrencyStatuses(
 
   return out;
 }
+
+type UpbitWalletStatus = {
+  currency: string;
+  wallet_state: string; // "working", "withdraw_only", "deposit_only", "paused"
+  block_state: string;
+  block_height: number | null;
+  block_updated_at: string | null;
+  block_elapsed_minutes: number | null;
+  net_type?: string;
+  network_name?: string;
+};
+
+export async function upbitInoutStatuses(coins: Iterable<string>): Promise<Record<string, TransferStatus>> {
+  const coinSet = new Set(Array.from(coins, (c) => (c || "").toUpperCase()).filter(Boolean));
+  const out: Record<string, TransferStatus> = {};
+  for (const c of coinSet) {
+    out[c] = { exchange: "upbit", coin: c, depositOk: null, withdrawOk: null, chains: [], chainInfo: [] };
+  }
+  if (coinSet.size === 0) return out;
+
+  try {
+    const payload = await fetchJson<UpbitWalletStatus[]>("https://api.upbit.com/v1/status/wallet", {
+      timeoutMs: 10000,
+    });
+    if (!Array.isArray(payload)) return out;
+
+    const bySymbol = new Map<string, UpbitWalletStatus[]>();
+    for (const row of payload) {
+      const sym = (row?.currency ?? "").toUpperCase();
+      if (!sym) continue;
+      if (!bySymbol.has(sym)) bySymbol.set(sym, []);
+      bySymbol.get(sym)!.push(row);
+    }
+
+    for (const coin of coinSet) {
+      const rows = bySymbol.get(coin);
+      if (!rows || rows.length === 0) continue;
+
+      const chains: string[] = [];
+      const chainInfo: ChainInfo[] = [];
+      let anyDeposit = false;
+      let anyWithdraw = false;
+
+      for (const row of rows) {
+        const state = (row.wallet_state ?? "").toLowerCase();
+        const netName = row.network_name ?? row.net_type ?? "NETWORK";
+        const depOk = state === "working" || state === "deposit_only";
+        const wdOk = state === "working" || state === "withdraw_only";
+
+        if (depOk) anyDeposit = true;
+        if (wdOk) anyWithdraw = true;
+
+        chainInfo.push({
+          name: netName,
+          depositOk: depOk,
+          withdrawOk: wdOk,
+          confirmations: null,
+          withdrawFee: null,
+        });
+        if (depOk && wdOk) chains.push(netName);
+      }
+
+      out[coin] = { exchange: "upbit", coin, depositOk: anyDeposit, withdrawOk: anyWithdraw, chains, chainInfo };
+    }
+  } catch {
+    return out;
+  }
+
+  return out;
+}
+
+export async function bybitCurrencyStatuses(
+  spot: Exchange,
+  coins: Iterable<string>,
+): Promise<Record<string, TransferStatus>> {
+  const coinSet = new Set(Array.from(coins, (c) => (c || "").toUpperCase()).filter(Boolean));
+  const out: Record<string, TransferStatus> = {};
+  for (const c of coinSet) {
+    out[c] = { exchange: "bybit", coin: c, depositOk: null, withdrawOk: null, chains: [], chainInfo: [] };
+  }
+  if (coinSet.size === 0) return out;
+
+  let currencies: any;
+  try {
+    currencies = await spot.fetchCurrencies();
+  } catch {
+    return out;
+  }
+
+  for (const coin of coinSet) {
+    const info: any = currencies?.[coin] ?? {};
+    const deposit = info?.deposit;
+    const withdraw = info?.withdraw;
+    const depositOk = typeof deposit === "boolean" ? deposit : deposit != null ? Boolean(deposit) : null;
+    const withdrawOk = typeof withdraw === "boolean" ? withdraw : withdraw != null ? Boolean(withdraw) : null;
+
+    const chains: string[] = [];
+    const chainInfo: ChainInfo[] = [];
+    const networks = info?.networks;
+    if (networks && typeof networks === "object") {
+      for (const [netCode, netInfo] of Object.entries<any>(networks)) {
+        const depOk = typeof netInfo?.deposit === "boolean" ? netInfo.deposit : netInfo?.deposit != null ? Boolean(netInfo.deposit) : null;
+        const wdOk = typeof netInfo?.withdraw === "boolean" ? netInfo.withdraw : netInfo?.withdraw != null ? Boolean(netInfo.withdraw) : null;
+        const withdrawFee = netInfo?.fee != null ? Number(netInfo.fee) : null;
+
+        chainInfo.push({
+          name: String(netCode),
+          depositOk: depOk,
+          withdrawOk: wdOk,
+          confirmations: null,
+          withdrawFee: Number.isFinite(withdrawFee) ? withdrawFee : null,
+        });
+        if (depOk === true && wdOk === true) chains.push(String(netCode));
+      }
+    }
+
+    out[coin] = { exchange: "bybit", coin, depositOk, withdrawOk, chains, chainInfo };
+  }
+
+  return out;
+}
+
+export async function okxCurrencyStatuses(
+  spot: Exchange,
+  coins: Iterable<string>,
+): Promise<Record<string, TransferStatus>> {
+  const coinSet = new Set(Array.from(coins, (c) => (c || "").toUpperCase()).filter(Boolean));
+  const out: Record<string, TransferStatus> = {};
+  for (const c of coinSet) {
+    out[c] = { exchange: "okx", coin: c, depositOk: null, withdrawOk: null, chains: [], chainInfo: [] };
+  }
+  if (coinSet.size === 0) return out;
+
+  let currencies: any;
+  try {
+    currencies = await spot.fetchCurrencies();
+  } catch {
+    return out;
+  }
+
+  for (const coin of coinSet) {
+    const info: any = currencies?.[coin] ?? {};
+    const deposit = info?.deposit;
+    const withdraw = info?.withdraw;
+    const depositOk = typeof deposit === "boolean" ? deposit : deposit != null ? Boolean(deposit) : null;
+    const withdrawOk = typeof withdraw === "boolean" ? withdraw : withdraw != null ? Boolean(withdraw) : null;
+
+    const chains: string[] = [];
+    const chainInfo: ChainInfo[] = [];
+    const networks = info?.networks;
+    if (networks && typeof networks === "object") {
+      for (const [netCode, netInfo] of Object.entries<any>(networks)) {
+        const depOk = typeof netInfo?.deposit === "boolean" ? netInfo.deposit : netInfo?.deposit != null ? Boolean(netInfo.deposit) : null;
+        const wdOk = typeof netInfo?.withdraw === "boolean" ? netInfo.withdraw : netInfo?.withdraw != null ? Boolean(netInfo.withdraw) : null;
+        const withdrawFee = netInfo?.fee != null ? Number(netInfo.fee) : null;
+        const withdrawMin = netInfo?.limits?.withdraw?.min != null ? Number(netInfo.limits.withdraw.min) : null;
+
+        chainInfo.push({
+          name: String(netCode),
+          depositOk: depOk,
+          withdrawOk: wdOk,
+          confirmations: null,
+          withdrawFee: Number.isFinite(withdrawFee) ? withdrawFee : null,
+          withdrawMin: Number.isFinite(withdrawMin) ? withdrawMin : null,
+        });
+        if (depOk === true && wdOk === true) chains.push(String(netCode));
+      }
+    }
+
+    out[coin] = { exchange: "okx", coin, depositOk, withdrawOk, chains, chainInfo };
+  }
+
+  return out;
+}

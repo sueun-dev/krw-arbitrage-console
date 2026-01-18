@@ -1,4 +1,4 @@
-export type Direction = "reverse" | "kimchi";
+export type Direction = "reverse" | "kimchi" | "contango";
 export type BasisMode = "entry" | "unwind";
 
 export type MarketQuote = {

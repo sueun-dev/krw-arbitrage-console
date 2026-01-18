@@ -220,11 +220,18 @@ export class BithumbOrderbookWs extends QuoteCache {
   private symbols: string[];
   private depth: number;
   private books = new Map<string, { bids: Map<number, number>; asks: Map<number, number> }>();
+  // Map from underscore format (FLOW_KRW) to original format (FLOW/KRW)
+  private symbolMap = new Map<string, string>();
 
   constructor(symbols: string[], depth = DEFAULT_BITHUMB_DEPTH, staleMs = DEFAULT_STALE_MS) {
     super(staleMs);
     this.symbols = uniq(symbols);
     this.depth = depth;
+    // Build symbol mapping: FLOW/KRW -> FLOW_KRW and reverse lookup
+    for (const sym of this.symbols) {
+      const wsSymbol = sym.replace("/", "_");
+      this.symbolMap.set(wsSymbol, sym);
+    }
     this.connect();
   }
 
@@ -249,7 +256,9 @@ export class BithumbOrderbookWs extends QuoteCache {
 
   private subscribe(ws: ReconnectingWebSocket, batch: string[]): void {
     if (!batch.length) return;
-    ws.send({ type: "orderbookdepth", symbols: batch, depth: this.depth });
+    // Convert to underscore format for Bithumb WS: FLOW/KRW -> FLOW_KRW
+    const wsSymbols = batch.map((s) => s.replace("/", "_"));
+    ws.send({ type: "orderbookdepth", symbols: wsSymbols, depth: this.depth });
   }
 
   private handleMessage(message: any): void {
@@ -276,13 +285,17 @@ export class BithumbOrderbookWs extends QuoteCache {
       }
     }
 
-    for (const [symbol, book] of grouped) {
-      this.books.set(symbol, book);
+    for (const [wsSymbol, book] of grouped) {
+      this.books.set(wsSymbol, book);
       let bid = 0;
       for (const price of book.bids.keys()) bid = Math.max(bid, price);
       let ask = 0;
       for (const price of book.asks.keys()) ask = ask > 0 ? Math.min(ask, price) : price;
-      if (bid > 0 && ask > 0) this.setQuote(symbol, { bid, ask });
+      if (bid > 0 && ask > 0) {
+        // Convert back to slash format: FLOW_KRW -> FLOW/KRW
+        const originalSymbol = this.symbolMap.get(wsSymbol) ?? wsSymbol;
+        this.setQuote(originalSymbol, { bid, ask });
+      }
     }
   }
 }
