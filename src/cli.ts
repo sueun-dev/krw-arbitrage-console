@@ -3,6 +3,10 @@ import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { runKimchiCycle, runReverseCycle, scanReverseClosestToZero, scanReverseAllOnce, watchReverseTopN } from "./flows";
 
+const LEGACY_B2G_NEAR_ZERO_PCT = 0.5;
+const LEGACY_B2G_BASIS_PCT = 0.2;
+const LEGACY_B2G_ENTRY_TOP_N = 10;
+
 function promptFloat(raw: string, fallback: number): number {
   const trimmed = raw.trim();
   if (!trimmed) return fallback;
@@ -30,22 +34,41 @@ async function confirmTransfer(rl: readline.Interface, coin: string, direction: 
   return answer === "Y";
 }
 
+async function runLegacyBithumbGatePreset(rl: readline.Interface): Promise<void> {
+  const chunkUsdt = promptFloat(await rl.question("청크(USDT) [50]: "), 50.0);
+  const maxChunks = promptInt(await rl.question("진입 청크 횟수 [1]: "), 1);
+  console.info(
+    `\nPreset: Bithumb/Gate hedger | near-zero premium ±${LEGACY_B2G_NEAR_ZERO_PCT}% | basis <= ${LEGACY_B2G_BASIS_PCT}% | TOP ${LEGACY_B2G_ENTRY_TOP_N}`,
+  );
+  await runReverseCycle(
+    chunkUsdt,
+    LEGACY_B2G_NEAR_ZERO_PCT,
+    LEGACY_B2G_BASIS_PCT,
+    maxChunks,
+    () => confirmLiveTrading(rl),
+    (coin, dir) => confirmTransfer(rl, coin, dir),
+    undefined,
+    { entryTopN: LEGACY_B2G_ENTRY_TOP_N },
+  );
+}
+
 export async function main(): Promise<void> {
   dotenv.config();
 
   const rl = readline.createInterface({ input, output });
   try {
     console.info("\n" + "=".repeat(60));
-    console.info("ARBITRAGE (BITHUMB ↔ GATEIO)");
+    console.info("KRW ARBITRAGE CONSOLE");
     console.info("=".repeat(60));
     console.info("1) [B2G] 빗썸→해외: 김프 0% 근접 코인으로 자금이동 (빗썸 매수 + 선물 숏 헷지 → 전송 → 청산)");
     console.info("2) [G2B] 해외→빗썸: 김프 높은 코인으로 차익실현 (해외 매수 + 선물 숏 헷지 → 전송 → 빗썸 매도)");
     console.info("3) (스캔) 김프 0% 근접 코인 리스트");
     console.info("4) (스캔) 전체 코인 프리미엄 출력");
     console.info("5) (워치) 실시간 모니터링");
+    console.info("6) (프리셋) legacy bithumb-gate-hedger 흡수 플로우");
     console.info("0) 종료");
 
-    const choice = (await rl.question("\n선택 (0-5): ")).trim();
+    const choice = (await rl.question("\n선택 (0-6): ")).trim();
     if (choice === "3") {
       const limit = promptInt(await rl.question("출력 개수 [30]: "), 30);
       await scanReverseClosestToZero(Math.max(1, limit));
@@ -73,6 +96,10 @@ export async function main(): Promise<void> {
         intervalSec: Math.max(1, intervalSec),
         concurrency: Math.max(1, concurrency),
       });
+      return;
+    }
+    if (choice === "6") {
+      await runLegacyBithumbGatePreset(rl);
       return;
     }
 

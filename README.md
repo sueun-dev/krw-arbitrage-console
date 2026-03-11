@@ -1,6 +1,6 @@
-# Kimchi Arbitrage
+# KRW Arbitrage Console
 
-Real-time cryptocurrency arbitrage monitor for KRW exchanges vs global CEX/DEX venues.
+Real-time cryptocurrency arbitrage monitor and execution console for KRW exchanges vs global CEX/DEX venues. The legacy `bithumb-gate-hedger` flow is absorbed as a CLI preset inside this repository.
 
 ## Features
 
@@ -67,6 +67,12 @@ npm run build
 npm run start:web
 ```
 
+CLI execution:
+```bash
+npm run build
+node dist/app.js
+```
+
 Access:
 - Kimchi Premium: http://localhost:5177
 - DEX Contango: http://localhost:5177/dex.html
@@ -95,12 +101,13 @@ npm run build
 
 - Bybit public API can be blocked by CloudFront in certain regions. Other exchanges will still operate.
 - This project is for monitoring and research only. Not financial advice.
+- Menu option `6` runs the absorbed Bithumb/Gate hedger preset with the legacy near-zero premium and basis defaults.
 
 ---
 
-# 김치 프리미엄 아비트라지
+# KRW 아비트라지 콘솔
 
-한국 거래소와 해외 CEX/DEX 간의 실시간 암호화폐 차익거래 모니터링 도구입니다.
+한국 거래소와 해외 CEX/DEX 간의 실시간 암호화폐 차익거래 모니터링 및 실행 콘솔입니다. 기존 `bithumb-gate-hedger` 플로우는 이 레포의 CLI preset으로 통합되었습니다.
 
 ## 기능
 
