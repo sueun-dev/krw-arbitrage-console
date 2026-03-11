@@ -65,7 +65,7 @@ export async function main(): Promise<void> {
     console.info("3) (스캔) 김프 0% 근접 코인 리스트");
     console.info("4) (스캔) 전체 코인 프리미엄 출력");
     console.info("5) (워치) 실시간 모니터링");
-    console.info("6) (프리셋) legacy bithumb-gate-hedger 흡수 플로우");
+    console.info("6) (프리셋) Bithumb/Gate hedger 흡수 플로우");
     console.info("0) 종료");
 
     const choice = (await rl.question("\n선택 (0-6): ")).trim();
