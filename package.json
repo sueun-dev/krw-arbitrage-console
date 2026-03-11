@@ -1,11 +1,12 @@
 {
-  "name": "arbitrage",
+  "name": "krw-arbitrage-console",
   "version": "0.0.0",
   "private": true,
-  "description": "Bithumb ↔ GateIO arbitrage CLI",
+  "description": "KRW premium monitor and execution console for domestic vs overseas crypto venues",
   "license": "UNLICENSED",
   "type": "commonjs",
   "bin": {
+    "krw-arbitrage-console": "dist/app.js",
     "arbitrage": "dist/app.js"
   },
   "scripts": {
