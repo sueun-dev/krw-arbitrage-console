@@ -3,7 +3,15 @@
   "version": "0.0.0",
   "private": true,
   "description": "KRW premium monitor and execution console for domestic vs overseas crypto venues",
-  "license": "UNLICENSED",
+  "author": "sueun-dev <sueun.dev@gmail.com>",
+  "license": "MIT",
+  "keywords": [
+    "arbitrage",
+    "kimchi-premium",
+    "trading-console",
+    "cryptocurrency",
+    "market-data"
+  ],
   "type": "commonjs",
   "bin": {
     "krw-arbitrage-console": "dist/app.js",
